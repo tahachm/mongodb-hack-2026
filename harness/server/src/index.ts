@@ -1,4 +1,4 @@
-import 'dotenv/config'
+import './loadEnv.js'
 import { createApp } from './app.js'
 import { createClaudeClient } from './claude.js'
 import { config } from './config.js'

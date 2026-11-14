@@ -20,7 +20,15 @@ export interface ToolDefinition {
  */
 export type ContentPart =
   | { type: 'text'; text: string }
-  | { type: 'tool_call'; id: string; name: string; input: Record<string, unknown> }
+  | {
+      type: 'tool_call'
+      id: string
+      name: string
+      input: Record<string, unknown>
+      /** Opaque data a provider needs echoed back verbatim when this tool_call is replayed
+       * in a later request (e.g. Gemini's thought signatures). Other providers ignore it. */
+      providerMeta?: unknown
+    }
   | { type: 'tool_result'; id: string; name: string; output: unknown; isError?: boolean }
 
 export interface Turn {
