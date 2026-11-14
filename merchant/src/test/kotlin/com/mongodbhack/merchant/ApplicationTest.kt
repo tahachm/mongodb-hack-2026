@@ -23,9 +23,23 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 // MERCHANT_ID must be set to "mall-wart" before Config/Catalog are touched (see build.gradle.kts'
-// `environment("MERCHANT_ID", ...)` on the test task) -- these tests use real catalog.json ids
-// that are deterministic across regenerations (groceries-00001/00002 are tagged mall-wart;
-// groceries-00017 is not).
+// `environment("MERCHANT_ID", ...)` on the test task) -- these tests use real catalog.json ids,
+// which tools/amazon_catalog.py reproduces deterministically. If the catalog is regenerated
+// from different source data, update these fixtures.
+
+/** Carried by mall-wart; the only catalog item whose name contains [ITEM_A_QUERY]. */
+private const val ITEM_A = "B07CN556CZ" // 327th Airborne Infantry Regiment Patch Recon
+private const val ITEM_A_PRICE = 1050
+private const val ITEM_A_QUERY = "airborne"
+
+/** Carried by mall-wart; the only mall-wart item matching [ITEM_B_QUERY]. */
+private const val ITEM_B = "B09VC4GPPN" // Montana West Bling Collection Ladies Sunglasses
+private const val ITEM_B_PRICE = 1999
+private const val ITEM_B_QUERY = "montana"
+
+/** Also matches [ITEM_B_QUERY], but only threadbarn carries it -- never visible to mall-wart. */
+private const val OTHER_MERCHANT_ITEM = "B09M728N79" // Montana West Handbags for Women
+
 class ApplicationTest {
 
     init {
@@ -47,21 +61,21 @@ class ApplicationTest {
     @Test
     fun `products search matches name and ranks by token hits`() = testApplication {
         application { module() }
-        val response = client.get("/products?q=spinach")
+        val response = client.get("/products?q=$ITEM_A_QUERY")
         assertEquals(HttpStatusCode.OK, response.status)
         val products = Json.parseToJsonElement(response.bodyAsText()).jsonObject["products"]!!.jsonArray
         assertTrue(products.isNotEmpty())
-        assertEquals("groceries-00001", products[0].jsonObject["id"]!!.jsonPrimitive.content)
+        assertEquals(ITEM_A, products[0].jsonObject["id"]!!.jsonPrimitive.content)
     }
 
     @Test
     fun `products search never returns items from other merchants`() = testApplication {
         application { module() }
-        val response = client.get("/products?q=mangoes")
+        val response = client.get("/products?q=$ITEM_B_QUERY")
         val ids = Json.parseToJsonElement(response.bodyAsText()).jsonObject["products"]!!.jsonArray
             .map { it.jsonObject["id"]!!.jsonPrimitive.content }
-        assertTrue(ids.contains("groceries-00002"))
-        assertTrue(!ids.contains("groceries-00017"))
+        assertTrue(ids.contains(ITEM_B))
+        assertTrue(!ids.contains(OTHER_MERCHANT_ITEM))
     }
 
     @Test
@@ -69,7 +83,7 @@ class ApplicationTest {
         application { module() }
         val response = client.post("/checkout_sessions") {
             contentType(ContentType.Application.Json)
-            setBody("""{"items": [{"id": "groceries-00001", "quantity": 1}]}""")
+            setBody("""{"items": [{"id": "$ITEM_A", "quantity": 1}]}""")
         }
         assertEquals(HttpStatusCode.BadRequest, response.status)
         assertEquals("missing_idempotency_key", Json.parseToJsonElement(response.bodyAsText()).jsonObject["code"]!!.jsonPrimitive.content)
@@ -78,7 +92,7 @@ class ApplicationTest {
     @Test
     fun `create_session prices lines and totals, then replays on retry`() = testApplication {
         application { module() }
-        val body = """{"items": [{"id": "groceries-00001", "quantity": 2}, {"id": "groceries-00002", "quantity": 1}]}"""
+        val body = """{"items": [{"id": "$ITEM_A", "quantity": 2}, {"id": "$ITEM_B", "quantity": 1}]}"""
 
         val first = client.post("/checkout_sessions") {
             contentType(ContentType.Application.Json)
@@ -89,8 +103,7 @@ class ApplicationTest {
         assertEquals("false", first.headers["Idempotent-Replayed"])
         val session = Json.parseToJsonElement(first.bodyAsText()).jsonObject
         assertEquals("ready_for_payment", session["status"]!!.jsonPrimitive.content)
-        // 2 * 849 + 1 * 679 = 2377
-        assertEquals(2377, session["totals"]!!.jsonArray.first { it.jsonObject["type"]!!.jsonPrimitive.content == "total" }
+        assertEquals(ITEM_A_PRICE * 2 + ITEM_B_PRICE, session["totals"]!!.jsonArray.first { it.jsonObject["type"]!!.jsonPrimitive.content == "total" }
             .jsonObject["amount"]!!.jsonPrimitive.content.toInt())
         val sessionId = session["id"]!!.jsonPrimitive.content
 
@@ -109,7 +122,7 @@ class ApplicationTest {
         val response = client.post("/checkout_sessions") {
             contentType(ContentType.Application.Json)
             header("Idempotency-Key", "ck2")
-            setBody("""{"items": [{"id": "groceries-00017", "quantity": 1}]}""")
+            setBody("""{"items": [{"id": "$OTHER_MERCHANT_ITEM", "quantity": 1}]}""")
         }
         assertEquals(HttpStatusCode.BadRequest, response.status)
         assertEquals("invalid_item", Json.parseToJsonElement(response.bodyAsText()).jsonObject["code"]!!.jsonPrimitive.content)
@@ -121,12 +134,12 @@ class ApplicationTest {
         client.post("/checkout_sessions") {
             contentType(ContentType.Application.Json)
             header("Idempotency-Key", "ck3")
-            setBody("""{"items": [{"id": "groceries-00001", "quantity": 1}]}""")
+            setBody("""{"items": [{"id": "$ITEM_A", "quantity": 1}]}""")
         }
         val conflict = client.post("/checkout_sessions") {
             contentType(ContentType.Application.Json)
             header("Idempotency-Key", "ck3")
-            setBody("""{"items": [{"id": "groceries-00001", "quantity": 2}]}""")
+            setBody("""{"items": [{"id": "$ITEM_A", "quantity": 2}]}""")
         }
         assertEquals(HttpStatusCode.UnprocessableEntity, conflict.status)
         assertEquals("idempotency_conflict", Json.parseToJsonElement(conflict.bodyAsText()).jsonObject["code"]!!.jsonPrimitive.content)
@@ -146,19 +159,19 @@ class ApplicationTest {
         val created = client.post("/checkout_sessions") {
             contentType(ContentType.Application.Json)
             header("Idempotency-Key", "ck4")
-            setBody("""{"items": [{"id": "groceries-00001", "quantity": 1}]}""")
+            setBody("""{"items": [{"id": "$ITEM_A", "quantity": 1}]}""")
         }
         val sessionId = Json.parseToJsonElement(created.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
 
         val updated = client.post("/checkout_sessions/$sessionId") {
             contentType(ContentType.Application.Json)
             header("Idempotency-Key", "ck5")
-            setBody("""{"items": [{"id": "groceries-00002", "quantity": 3}]}""")
+            setBody("""{"items": [{"id": "$ITEM_B", "quantity": 3}]}""")
         }
         assertEquals(HttpStatusCode.OK, updated.status)
         val total = Json.parseToJsonElement(updated.bodyAsText()).jsonObject["totals"]!!.jsonArray
             .first { it.jsonObject["type"]!!.jsonPrimitive.content == "total" }.jsonObject["amount"]!!.jsonPrimitive.content.toInt()
-        assertEquals(679 * 3, total)
+        assertEquals(ITEM_B_PRICE * 3, total)
     }
 
     @Test
@@ -167,7 +180,7 @@ class ApplicationTest {
         val created = client.post("/checkout_sessions") {
             contentType(ContentType.Application.Json)
             header("Idempotency-Key", "ck6")
-            setBody("""{"items": [{"id": "groceries-00001", "quantity": 1}]}""")
+            setBody("""{"items": [{"id": "$ITEM_A", "quantity": 1}]}""")
         }
         val sessionId = Json.parseToJsonElement(created.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
 
@@ -194,7 +207,7 @@ class ApplicationTest {
         val created = client.post("/checkout_sessions") {
             contentType(ContentType.Application.Json)
             header("Idempotency-Key", "ck9")
-            setBody("""{"items": [{"id": "groceries-00001", "quantity": 1}]}""")
+            setBody("""{"items": [{"id": "$ITEM_A", "quantity": 1}]}""")
         }
         val sessionId = Json.parseToJsonElement(created.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
         client.post("/checkout_sessions/$sessionId/cancel") {
@@ -206,7 +219,7 @@ class ApplicationTest {
         val update = client.post("/checkout_sessions/$sessionId") {
             contentType(ContentType.Application.Json)
             header("Idempotency-Key", "ck11")
-            setBody("""{"items": [{"id": "groceries-00002", "quantity": 1}]}""")
+            setBody("""{"items": [{"id": "$ITEM_B", "quantity": 1}]}""")
         }
         assertEquals(HttpStatusCode.MethodNotAllowed, update.status)
         assertEquals("session_closed", Json.parseToJsonElement(update.bodyAsText()).jsonObject["code"]!!.jsonPrimitive.content)
@@ -240,7 +253,7 @@ class ApplicationTest {
             val created = client.post("/checkout_sessions") {
                 contentType(ContentType.Application.Json)
                 header("Idempotency-Key", "cp1")
-                setBody("""{"items": [{"id": "groceries-00001", "quantity": 1}]}""")
+                setBody("""{"items": [{"id": "$ITEM_A", "quantity": 1}]}""")
             }
             val sessionId = Json.parseToJsonElement(created.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
 
@@ -264,7 +277,7 @@ class ApplicationTest {
                 val created = client.post("/checkout_sessions") {
                     contentType(ContentType.Application.Json)
                     header("Idempotency-Key", "cp3")
-                    setBody("""{"items": [{"id": "groceries-00001", "quantity": 1}]}""")
+                    setBody("""{"items": [{"id": "$ITEM_A", "quantity": 1}]}""")
                 }
                 val sessionId = Json.parseToJsonElement(created.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
 
@@ -292,7 +305,7 @@ class ApplicationTest {
             val created = client.post("/checkout_sessions") {
                 contentType(ContentType.Application.Json)
                 header("Idempotency-Key", "cp5")
-                setBody("""{"items": [{"id": "groceries-00001", "quantity": 1}]}""")
+                setBody("""{"items": [{"id": "$ITEM_A", "quantity": 1}]}""")
             }
             val sessionId = Json.parseToJsonElement(created.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
 
@@ -319,7 +332,7 @@ class ApplicationTest {
                 val created = client.post("/checkout_sessions") {
                     contentType(ContentType.Application.Json)
                     header("Idempotency-Key", "cp7")
-                    setBody("""{"items": [{"id": "groceries-00001", "quantity": 1}]}""")
+                    setBody("""{"items": [{"id": "$ITEM_A", "quantity": 1}]}""")
                 }
                 val sessionId = Json.parseToJsonElement(created.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
                 client.post("/checkout_sessions/$sessionId/cancel") {
