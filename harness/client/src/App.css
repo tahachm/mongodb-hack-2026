@@ -114,6 +114,42 @@
   cursor: default;
 }
 
+/* ---------- nav ---------- */
+
+.app-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.app-nav-link {
+  font-size: 0.85rem;
+  padding: 0.45rem 0.8rem;
+  border-radius: 999px;
+  color: var(--text-muted);
+  text-decoration: none;
+  transition:
+    color 0.15s,
+    background 0.15s;
+}
+
+.app-nav-link:hover {
+  color: var(--text);
+}
+
+.app-nav-link.active {
+  color: var(--text);
+  background: var(--accent-dim);
+}
+
+/* ---------- inspect ---------- */
+
+.inspect-view {
+  flex: 1;
+  overflow: auto;
+  padding: 1.25rem 0;
+}
+
 /* ---------- chat ---------- */
 
 .chat-window {
