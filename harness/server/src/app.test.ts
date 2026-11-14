@@ -67,7 +67,7 @@ describe('harness-server chat API', () => {
           content: [{ type: 'tool_call', id: 'call_1', name: 'echo', input: { x: 1 } }],
         }
       }),
-      async (name, input) => ({ sawName: name, sawInput: input }),
+      () => async (name, input) => ({ sawName: name, sawInput: input }),
     )
 
     const created = await request(app).post('/sessions').expect(201)

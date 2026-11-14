@@ -43,4 +43,14 @@ export const config = {
   },
   merchants: parseMerchantUrls(process.env.MERCHANT_URLS),
   pspUrl: (process.env.PSP_URL ?? 'http://127.0.0.1:8081').replace(/\/$/, ''),
+  preferencesUrl: (process.env.PREFERENCES_URL ?? 'http://127.0.0.1:8083').replace(/\/$/, ''),
+  // Embeddings always go through Gemini regardless of LLM_PROVIDER (see embeddings.ts) --
+  // optional here, not requireEnv'd, so a chat-only/no-purchases setup still starts without
+  // it; pay_for_checkout_session fails clearly the moment something actually needs it.
+  embeddingApiKey: process.env.GEMINI_API_KEY ?? '',
+  embeddingModel: process.env.EMBEDDING_MODEL ?? 'gemini-embedding-001',
+  // Must match the preferences service's EMBEDDING_DIMENSIONS -- its Atlas Vector Search
+  // index is fixed-width. gemini-embedding-001 natively returns 3072 dims but supports
+  // truncating to shorter prefixes (768, 1536) via outputDimensionality.
+  embeddingDimensions: Number(process.env.EMBEDDING_DIMENSIONS) || 768,
 }

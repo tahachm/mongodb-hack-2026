@@ -2,19 +2,35 @@ import cors from 'cors'
 import express from 'express'
 import { runAgentTurn, type ToolExecutor } from './agent.js'
 import { config } from './config.js'
+import { createGeminiEmbedder, createUnavailableEmbedder } from './embeddings.js'
 import type { LlmClient } from './llm.js'
 import { SessionStore } from './sessions.js'
 import { SYSTEM_PROMPT } from './systemPrompt.js'
 import { acpTools, createAcpToolExecutor } from './tools/acp.js'
 
-const defaultExecuteTool = createAcpToolExecutor(config.merchants, config.pspUrl)
+const embedder = config.embeddingApiKey
+  ? createGeminiEmbedder(config.embeddingApiKey, config.embeddingModel, config.embeddingDimensions)
+  : createUnavailableEmbedder(
+      'GEMINI_API_KEY is required to embed preference_notes for pay_for_checkout_session',
+    )
+
+/** One executor per chat session, not a shared singleton -- `buyer_id` on every recorded
+ * purchase is the harness chat session id, so preferences recorded in one conversation stay
+ * scoped to it. */
+function defaultCreateToolExecutor(buyerId: string): ToolExecutor {
+  return createAcpToolExecutor(config.merchants, config.pspUrl, {
+    baseUrl: config.preferencesUrl,
+    buyerId,
+    embedder,
+  })
+}
 
 /** Builds the Express app without binding a port, so tests can drive it with supertest and
  * inject a fake LlmClient/ToolExecutor instead of calling a real model provider or the real
  * merchant/psp services. */
 export function createApp(
   llm: LlmClient,
-  executeTool: ToolExecutor = defaultExecuteTool,
+  createToolExecutor: (buyerId: string) => ToolExecutor = defaultCreateToolExecutor,
   sessions: SessionStore = new SessionStore(),
 ) {
   const app = express()
@@ -65,6 +81,7 @@ export function createApp(
 
     try {
       const history = session.messages.map(({ role, content }) => ({ role, content }))
+      const executeTool = createToolExecutor(session.id)
       await runAgentTurn(llm, SYSTEM_PROMPT, acpTools, history, executeTool, (turn) => {
         sessions.appendMessage(session.id, { ...turn, createdAt: new Date().toISOString() })
       })

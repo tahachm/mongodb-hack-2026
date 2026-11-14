@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
-import type { ToolDefinition } from '../llm.js'
 import type { ToolExecutor } from '../agent.js'
+import type { Embedder } from '../embeddings.js'
+import type { ToolDefinition } from '../llm.js'
 
 export const acpTools: ToolDefinition[] = [
   {
@@ -57,17 +58,37 @@ export const acpTools: ToolDefinition[] = [
   {
     name: 'pay_for_checkout_session',
     description:
-      "Pay for and complete a checkout session. Reads the session's real total from the " +
+      "Pay for and complete a checkout session, and record this purchase in the buyer's " +
+      'long-term preference memory in the same call. Reads the real total from the ' +
       'merchant, delegates payment to the payment provider for exactly that amount, then ' +
-      'completes the checkout. You never specify an amount -- it is always read from the ' +
-      'merchant, not taken from anything you say.',
+      'completes the checkout -- you never specify an amount, it is always read from the ' +
+      'merchant, not taken from anything you say. preference_notes and conversation_notes ' +
+      'are both required: this call is rejected without them, by design, so a purchase can ' +
+      "never go through without also recording what it reveals about the buyer's taste.",
     inputSchema: {
       type: 'object',
       properties: {
         merchant_id: { type: 'string' },
         session_id: { type: 'string' },
+        preference_notes: {
+          type: 'array',
+          items: { type: 'string' },
+          minItems: 1,
+          description:
+            'Several short, distinct phrases capturing what this purchase reveals about the ' +
+            'buyer -- occasion, style, dietary/fit constraints, budget sensitivity, brand ' +
+            'affinity, and so on. One phrase per distinct fact, not one long paragraph, so a ' +
+            'future semantic search can match on any of them individually. Provide more than one.',
+        },
+        conversation_notes: {
+          type: 'string',
+          description:
+            'A plain-text summary of the conversation that led to this purchase: what the ' +
+            'buyer asked for and why, and any constraints they mentioned. Written for a ' +
+            'future reader who was not part of this conversation.',
+        },
       },
-      required: ['merchant_id', 'session_id'],
+      required: ['merchant_id', 'session_id', 'preference_notes', 'conversation_notes'],
     },
   },
   {
@@ -95,6 +116,18 @@ function requireString(input: Record<string, unknown>, key: string): string {
   return value
 }
 
+function requireNonEmptyStringArray(input: Record<string, unknown>, key: string): string[] {
+  const value = input[key]
+  const valid =
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every((v) => typeof v === 'string' && v.trim() !== '')
+  if (!valid) {
+    throw new ToolInputError(`"${key}" must be a non-empty array of non-empty strings`)
+  }
+  return value as string[]
+}
+
 async function readJsonOrThrow(res: Response, context: string): Promise<Record<string, unknown>> {
   const body = await res.json().catch(() => ({}))
   if (!res.ok) {
@@ -111,15 +144,26 @@ async function postJson(url: string, body: unknown): Promise<Response> {
   })
 }
 
+/** Buyer-scoped wiring for recording purchases in the preferences store: the preferences
+ * service's base URL, the buyer id to record under (the harness chat session id -- see
+ * app.ts), and the embedder used to turn `preference_notes` strings into vectors. */
+export interface PreferencesContext {
+  baseUrl: string
+  buyerId: string
+  embedder: Embedder
+}
+
 /**
- * Builds a ToolExecutor wired to a specific set of merchant base URLs and a PSP base URL,
- * instead of reading a global config singleton -- so tests can point it at throwaway fake
- * servers the same way the merchant/psp projects' own tests do, and index.ts is the only
- * place that wires the real config in.
+ * Builds a ToolExecutor wired to a specific set of merchant base URLs, a PSP base URL, and a
+ * preferences store context, instead of reading a global config singleton -- so tests can
+ * point it at throwaway fake servers the same way the merchant/psp projects' own tests do,
+ * and app.ts is the only place that wires the real config in (one executor per chat session,
+ * since `preferences.buyerId` is per-session).
  */
 export function createAcpToolExecutor(
   merchants: Map<string, string>,
   pspUrl: string,
+  preferences: PreferencesContext,
 ): ToolExecutor {
   function merchantBaseUrl(merchantId: string): string {
     const base = merchants.get(merchantId)
@@ -177,10 +221,47 @@ export function createAcpToolExecutor(
     return readJsonOrThrow(res, 'cancel_checkout_session')
   }
 
+  /**
+   * Embeds each preference note and records the purchase in the preferences store. Called
+   * only after the charge has already succeeded, and its failures are caught, not thrown --
+   * a tracking outage must never look like the purchase itself failed, or get retried as a
+   * double charge. The caller surfaces the outcome in the tool result instead so the model
+   * (and ultimately a human) can see tracking didn't happen.
+   */
+  async function recordPurchasePreferences(
+    merchantId: string,
+    order: Record<string, unknown>,
+    preferenceNotes: string[],
+    conversationNotes: string,
+  ): Promise<Record<string, unknown>> {
+    try {
+      const embeddings = await preferences.embedder.embed(preferenceNotes)
+      const res = await postJson(`${preferences.baseUrl}/purchases`, {
+        buyer_id: preferences.buyerId,
+        merchant_id: merchantId,
+        product: {
+          line_items: order.line_items ?? [],
+          totals: order.totals ?? [],
+          order: order.order ?? null,
+        },
+        notes: conversationNotes,
+        vectors: preferenceNotes.map((note, i) => ({ label: note, embedding: embeddings[i] })),
+      })
+      const body = await readJsonOrThrow(res, 'pay_for_checkout_session (record preferences)')
+      return { recorded: true, purchase_id: body.purchase_id, vector_count: body.vector_count }
+    } catch (err) {
+      return { recorded: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
   async function payForCheckoutSession(input: Record<string, unknown>) {
     const merchantId = requireString(input, 'merchant_id')
     const base = merchantBaseUrl(merchantId)
     const sessionId = requireString(input, 'session_id')
+    // Required up front, before any money moves: preference tracking can't be skipped by
+    // just omitting it, because there is no way to pay without it in the same call.
+    const preferenceNotes = requireNonEmptyStringArray(input, 'preference_notes')
+    const conversationNotes = requireString(input, 'conversation_notes')
 
     // 1. Read the session's real state -- the amount we pay is never taken from the model.
     const sessionRes = await fetch(`${base}/checkout_sessions/${encodeURIComponent(sessionId)}`)
@@ -212,7 +293,16 @@ export function createAcpToolExecutor(
       `${base}/checkout_sessions/${encodeURIComponent(sessionId)}/complete`,
       { payment_data: { token: token.id } },
     )
-    return readJsonOrThrow(completeRes, 'pay_for_checkout_session (complete)')
+    const order = await readJsonOrThrow(completeRes, 'pay_for_checkout_session (complete)')
+
+    // 4. Record this purchase in the preferences store now that the charge succeeded.
+    const preferenceTracking = await recordPurchasePreferences(
+      merchantId,
+      order,
+      preferenceNotes,
+      conversationNotes,
+    )
+    return { ...order, preference_tracking: preferenceTracking }
   }
 
   return async function executeAcpTool(
