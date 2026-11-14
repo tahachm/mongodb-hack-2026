@@ -1,11 +1,22 @@
 import cors from 'cors'
 import express from 'express'
+import { runAgentTurn, type ToolExecutor } from './agent.js'
+import { config } from './config.js'
 import type { LlmClient } from './llm.js'
 import { SessionStore } from './sessions.js'
+import { SYSTEM_PROMPT } from './systemPrompt.js'
+import { acpTools, createAcpToolExecutor } from './tools/acp.js'
+
+const defaultExecuteTool = createAcpToolExecutor(config.merchants, config.pspUrl)
 
 /** Builds the Express app without binding a port, so tests can drive it with supertest and
- * inject a fake LlmClient instead of calling a real model provider. */
-export function createApp(llm: LlmClient, sessions: SessionStore = new SessionStore()) {
+ * inject a fake LlmClient/ToolExecutor instead of calling a real model provider or the real
+ * merchant/psp services. */
+export function createApp(
+  llm: LlmClient,
+  executeTool: ToolExecutor = defaultExecuteTool,
+  sessions: SessionStore = new SessionStore(),
+) {
   const app = express()
   app.use(cors())
   app.use(express.json())
@@ -48,21 +59,21 @@ export function createApp(llm: LlmClient, sessions: SessionStore = new SessionSt
 
     sessions.appendMessage(session.id, {
       role: 'user',
-      content,
+      content: [{ type: 'text', text: content }],
       createdAt: new Date().toISOString(),
     })
 
     try {
-      const reply = await llm.send(session.messages.map(({ role, content }) => ({ role, content })))
-      sessions.appendMessage(session.id, {
-        role: 'assistant',
-        content: reply,
-        createdAt: new Date().toISOString(),
+      const history = session.messages.map(({ role, content }) => ({ role, content }))
+      await runAgentTurn(llm, SYSTEM_PROMPT, acpTools, history, executeTool, (turn) => {
+        sessions.appendMessage(session.id, { ...turn, createdAt: new Date().toISOString() })
       })
-      res.json(session)
+      res.json(sessions.get(session.id))
     } catch (err) {
-      // The user's turn above is already recorded, so a retry resends the same history --
-      // same idempotency-by-replay spirit as the merchant/psp mocks, just not key-guarded.
+      // Everything the agent loop already completed before this failure (e.g. earlier tool
+      // calls in the same turn) was already persisted via onTurn above, so a retry doesn't
+      // lose it -- same idempotency-by-replay spirit as the merchant/psp mocks, just not
+      // key-guarded here.
       res.status(502).json({
         error: 'llm_request_failed',
         message: err instanceof Error ? err.message : String(err),

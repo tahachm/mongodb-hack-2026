@@ -8,6 +8,20 @@ function requireEnv(name: string): string {
   return value
 }
 
+/** Parses `MERCHANT_URLS=mall-wart=http://127.0.0.1:8080,somefrills=http://127.0.0.1:8082`
+ * into an id -> base URL map. Empty/unset is valid -- shopping tools just report "no
+ * merchants configured" instead of the server refusing to start, so plain chat still works
+ * without any merchant/psp processes running. */
+function parseMerchantUrls(raw: string | undefined): Map<string, string> {
+  const merchants = new Map<string, string>()
+  if (!raw) return merchants
+  for (const pair of raw.split(',')) {
+    const [id, url] = pair.split('=').map((s) => s.trim())
+    if (id && url) merchants.set(id, url.replace(/\/$/, ''))
+  }
+  return merchants
+}
+
 const provider: LlmProvider = process.env.LLM_PROVIDER === 'anthropic' ? 'anthropic' : 'gemini'
 
 export const config = {
@@ -27,4 +41,6 @@ export const config = {
         : (process.env.ANTHROPIC_API_KEY ?? ''),
     model: process.env.ANTHROPIC_MODEL ?? 'claude-haiku-5-5',
   },
+  merchants: parseMerchantUrls(process.env.MERCHANT_URLS),
+  pspUrl: (process.env.PSP_URL ?? 'http://127.0.0.1:8081').replace(/\/$/, ''),
 }

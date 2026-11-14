@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto'
+import type { ContentPart } from './llm.js'
 
 export interface StoredMessage {
   role: 'user' | 'assistant'
-  content: string
+  content: ContentPart[]
   createdAt: string
 }
 
