@@ -1,0 +1,9 @@
+fastapi>=0.110
+uvicorn>=0.29
+httpx>=0.27
+pymongo>=4.7
+anthropic>=0.40
+python-dotenv>=1.0
+rich>=13.7
+mongomock>=4.1   # offline tests only
+langsmith        # optional tracing
