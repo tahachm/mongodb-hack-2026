@@ -3,3 +3,6 @@
 __pycache__/
 *.pyc
 .mcp.json
+
+amazon_data/.venv
+amazon_data/data
