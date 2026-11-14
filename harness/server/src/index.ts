@@ -1,9 +1,11 @@
-import express from 'express'
+import 'dotenv/config'
+import { createApp } from './app.js'
+import { createClaudeClient } from './claude.js'
+import { config } from './config.js'
 
-const port = Number(process.env.PORT) || 4000
+const claude = createClaudeClient(config.anthropicApiKey, config.anthropicModel)
+const app = createApp(claude)
 
-const app = express()
-
-app.listen(port, () => {
-  console.log(`[harness-server] listening on port ${port}`)
+app.listen(config.port, () => {
+  console.log(`[harness-server] listening on port ${config.port}, model ${config.anthropicModel}`)
 })
