@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto'
 import type { ContentPart } from './llm.js'
 
 export interface StoredMessage {
@@ -23,7 +22,10 @@ export class SessionStore {
 
   create(): ChatSession {
     const session: ChatSession = {
-      id: randomUUID(),
+      // Hardcoded for testing, so buyer_id (== session id, see app.ts) stays stable across
+      // harness restarts instead of a fresh randomUUID() forgetting preferences/audit history
+      // every time. Revert to randomUUID() once real session identity exists.
+      id: 'f282b912-1180-4094-9120-0062cc843741',
       createdAt: new Date().toISOString(),
       messages: [],
     }
