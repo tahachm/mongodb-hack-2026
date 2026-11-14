@@ -40,8 +40,16 @@ object Catalog {
         json.decodeFromString<List<CatalogItem>>(requireResource("/catalog.json"))
     }
 
+    /** This merchant's items as loaded from Atlas at startup; null means use catalog.json. */
+    @Volatile
+    private var atlasItems: List<CatalogItem>? = null
+
+    fun useAtlasItems(items: List<CatalogItem>) {
+        atlasItems = items
+    }
+
     fun itemsFor(merchantId: String): List<CatalogItem> =
-        allItems.filter { merchantId in it.merchantIds }
+        atlasItems ?: allItems.filter { merchantId in it.merchantIds }
 
     private fun requireResource(path: String): String {
         val stream = Catalog::class.java.getResourceAsStream(path)

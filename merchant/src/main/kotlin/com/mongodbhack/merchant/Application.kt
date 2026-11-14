@@ -13,6 +13,7 @@ import io.ktor.server.response.respond
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.jsonObject
 
@@ -22,11 +23,23 @@ fun main() {
             "Unknown MERCHANT_ID '${Config.merchantId}'. Known merchants: " +
                 Catalog.merchants.joinToString { it.id }
         )
+    val source = Config.mongoUri?.let { uri ->
+        val atlas = AtlasCatalog(uri)
+        val loaded = runBlocking { atlas.loadItems(Config.merchantId) }
+        check(loaded.isNotEmpty()) {
+            "no products for '${Config.merchantId}' in ${Config.dbName}.${Config.productsCollection} -- " +
+                "run merchant/tools/load_catalog_to_atlas.py first"
+        }
+        Catalog.useAtlasItems(loaded)
+        atlasCatalog = atlas
+        "MongoDB Atlas (${Config.dbName}.${Config.productsCollection}, vector search)"
+    } ?: "bundled catalog.json (keyword search)"
+
     val items = Catalog.itemsFor(Config.merchantId)
     val byCategory = items.groupingBy { it.category }.eachCount().toSortedMap()
     println(
-        "[${merchant.name}] (${Config.merchantId}) loaded ${items.size} / ${Catalog.allItems.size} " +
-            "catalog items on port ${Config.port} -- categories: $byCategory"
+        "[${merchant.name}] (${Config.merchantId}) loaded ${items.size} catalog items from $source " +
+            "on port ${Config.port} -- categories: $byCategory"
     )
 
     embeddedServer(Netty, port = Config.port, host = "0.0.0.0", module = Application::module).start(wait = true)
@@ -110,7 +123,32 @@ fun Application.module() {
     }
 }
 
-private fun searchProducts(q: String): ProductsResponse {
+/** Set by main() when MONGODB_URI is configured; null in tests and offline runs. */
+@Volatile
+private var atlasCatalog: AtlasCatalog? = null
+
+private const val SEARCH_LIMIT = 20
+
+private suspend fun searchProducts(q: String): ProductsResponse {
+    val atlas = atlasCatalog
+    if (atlas != null && q.isNotBlank()) {
+        val ids = try {
+            atlas.searchIds(Config.merchantId, q, SEARCH_LIMIT)
+        } catch (e: Exception) {
+            // Atlas Search can be briefly unavailable (e.g. its mongot process restarting);
+            // degrade to keyword search over the already-loaded items instead of failing.
+            println("[${Config.merchantId}] vector search failed, using keyword search: ${e.message}")
+            null
+        }
+        if (ids != null) {
+            val byId = Catalog.itemsFor(Config.merchantId).associateBy { it.id }
+            return ProductsResponse(Config.merchantId, ids.mapNotNull { byId[it]?.toProductView() })
+        }
+    }
+    return keywordSearch(q)
+}
+
+private fun keywordSearch(q: String): ProductsResponse {
     val tokens = q.lowercase().replace("\"", " ").split(Regex("\\s+")).filter { it.length > 1 }
     val catalog = Catalog.itemsFor(Config.merchantId)
     val scored = catalog.map { item ->

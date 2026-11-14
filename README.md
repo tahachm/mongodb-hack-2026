@@ -18,7 +18,8 @@ Kotlin/Ktor service.
   (uv script, streams the dataset). Fashion is carried by threadbarn, beauty by wellgreens,
   mall-wart carries a share of both; somefrills and circuitspree carry nothing.
   `merchant/tools/generate_catalog.py` still regenerates the old synthetic catalog
-  deterministically (and `merchants.json`).
+  deterministically (and `merchants.json`). With `MONGODB_URI` set, merchants read the
+  catalog from Atlas instead and `/products` uses Atlas Vector Search (see below).
 - `psp/` — ACP payment service provider mock (`delegate_payment` / `vt_` tokens), default
   port 8081.
 - `preferences/` — past-purchase vector store, backed by MongoDB Atlas Vector Search.
@@ -38,6 +39,23 @@ cd preferences && MONGODB_URI="mongodb+srv://..." ./gradlew run   # :8083
 ```
 
 `merchant`'s `PSP_URL` env var points it at the PSP (default `http://127.0.0.1:8081`).
+
+**Merchant catalog in Atlas.** Set `MONGODB_URI` (and optionally `MONGODB_DB`) on the
+merchants and they load their items from the `products` collection at startup and answer
+`/products?q=` with `$vectorSearch` (semantic: "something for a beach wedding" works, not just
+keyword overlap). Fill that collection once -- and again whenever `catalog.json` changes --
+with:
+
+```bash
+MONGODB_URI="mongodb+srv://..." uv run merchant/tools/load_catalog_to_atlas.py --wait
+```
+
+It replaces the collection with all 10,000 items with an `embedding_text` field and creates the
+`product_vector_index` index, which uses Atlas Automated Embedding (Voyage AI, `EMBEDDING_MODEL`,
+default `voyage-4`) -- Atlas embeds every product server-side, so neither the script nor the
+merchant calls an embedding API. `--wait` polls until the index is queryable. If vector search
+is unavailable at query time, a merchant falls back to keyword search over its loaded items.
+Without `MONGODB_URI`, merchants use the bundled `catalog.json` and keyword search (tests do).
 
 `preferences` requires `MONGODB_URI` (an Atlas connection string -- Atlas Vector Search
 isn't available against a local `mongod`). `MONGODB_DB` (default `agentic_commerce`) and

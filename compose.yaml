@@ -12,6 +12,10 @@
 x-merchant-env: &merchant-env
   PORT: "8080"
   PSP_URL: http://psp:8081
+  # Catalog + vector search come from Atlas (fill it once with
+  # merchant/tools/load_catalog_to_atlas.py); unset falls back to the bundled catalog.json.
+  MONGODB_URI: ${MONGODB_URI:-}
+  MONGODB_DB: ${MONGODB_DB:-agentic_commerce}
 
 x-merchant-service: &merchant-service
   build:
