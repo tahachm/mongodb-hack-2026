@@ -104,6 +104,43 @@ export const acpTools: ToolDefinition[] = [
       required: ['merchant_id', 'session_id'],
     },
   },
+  {
+    name: 'recall_past_purchases',
+    description:
+      "Semantically search this buyer's own past purchases and the conversational context " +
+      'recorded with them (see pay_for_checkout_session) -- not a product catalog search. ' +
+      'Call this whenever the user is looking for or mentions wanting something, alongside ' +
+      'search_products, to check whether they bought something like it before: e.g. if they ' +
+      'ask for toilet paper and previously bought toilet paper, this surfaces that purchase ' +
+      'and why they bought it, so you can mention it (brand they liked, a preference they ' +
+      'stated, the merchant). Scoped to this buyer only; empty matches just means no relevant ' +
+      'history, not an error.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        queries: {
+          type: 'array',
+          items: { type: 'string' },
+          minItems: 1,
+          description:
+            'One or more short phrases describing what the user is currently looking for or ' +
+            'just mentioned (e.g. "toilet paper", "something for a home office on a budget"). ' +
+            'Each is searched independently -- provide more than one to cover different ' +
+            'angles of the same request if useful.',
+        },
+        merchant_id: {
+          type: 'string',
+          description: 'Optional: restrict results to purchases made at one merchant.',
+        },
+        limit: {
+          type: 'integer',
+          minimum: 1,
+          description: 'Max matches per query, default 5.',
+        },
+      },
+      required: ['queries'],
+    },
+  },
 ]
 
 class ToolInputError extends Error {}
@@ -222,6 +259,27 @@ export function createAcpToolExecutor(
   }
 
   /**
+   * Semantic lookup over this buyer's past purchases. Embeds each query phrase and runs the
+   * preferences store's bulk `$vectorSearch` scoped to `preferences.buyerId` -- never another
+   * buyer's history. Returns whatever the preferences service returns (a `results` array
+   * keyed by the query text); an embedder/preferences outage surfaces as a thrown error like
+   * any other tool failure, since this is a read with nothing to protect by catching it.
+   */
+  async function recallPastPurchases(input: Record<string, unknown>) {
+    const queries = requireNonEmptyStringArray(input, 'queries')
+    const merchantId = typeof input.merchant_id === 'string' ? input.merchant_id : undefined
+    const limit = typeof input.limit === 'number' ? input.limit : undefined
+
+    const embeddings = await preferences.embedder.embed(queries)
+    const res = await postJson(`${preferences.baseUrl}/purchases/search`, {
+      buyer_id: preferences.buyerId,
+      merchant_id: merchantId,
+      queries: queries.map((q, i) => ({ id: q, embedding: embeddings[i], limit })),
+    })
+    return readJsonOrThrow(res, 'recall_past_purchases')
+  }
+
+  /**
    * Embeds each preference note and records the purchase in the preferences store. Called
    * only after the charge has already succeeded, and its failures are caught, not thrown --
    * a tracking outage must never look like the purchase itself failed, or get retried as a
@@ -320,6 +378,8 @@ export function createAcpToolExecutor(
         return payForCheckoutSession(input)
       case 'cancel_checkout_session':
         return cancelCheckoutSession(input)
+      case 'recall_past_purchases':
+        return recallPastPurchases(input)
       default:
         throw new Error(`unknown tool "${name}"`)
     }

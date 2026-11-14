@@ -74,7 +74,10 @@ function fakeMerchant() {
 
 /** Fake preferences store: just enough of the real contract (see preferences/) to exercise
  * the tool executor -- records whatever it's POSTed and echoes back an id. */
-function fakePreferences(seenPurchases: Array<Record<string, unknown>>) {
+function fakePreferences(
+  seenPurchases: Array<Record<string, unknown>>,
+  seenSearches: Array<Record<string, unknown>> = [],
+) {
   const app = express()
   app.use(express.json())
   app.post('/purchases', (req, res) => {
@@ -83,6 +86,32 @@ function fakePreferences(seenPurchases: Array<Record<string, unknown>>) {
       purchase_id: 'pur_fake',
       created: new Date().toISOString(),
       vector_count: (req.body.vectors ?? []).length,
+    })
+  })
+  app.post('/purchases/search', (req, res) => {
+    seenSearches.push(req.body)
+    const queries = (req.body.queries ?? []) as Array<{ id: string }>
+    res.json({
+      results: queries.map((q) => ({
+        id: q.id,
+        // Only a query literally asking about toilet paper gets a canned match -- lets
+        // tests tell "found a relevant prior purchase" apart from "found nothing" using
+        // the same fake server, same spirit as fakeMerchant's "mouse" products filter.
+        matches:
+          q.id === 'toilet paper'
+            ? [
+                {
+                  purchase_id: 'pur_prior',
+                  label: 'prefers unscented',
+                  score: 0.95,
+                  merchant_id: 'mall-wart',
+                  product: { line_items: [{ title: 'EcoSoft Toilet Paper, 12-pack' }] },
+                  notes: 'User mentioned preferring unscented toilet paper.',
+                  created: '2026-01-01T00:00:00.000Z',
+                },
+              ]
+            : [],
+      })),
     })
   })
   return app
@@ -119,6 +148,7 @@ describe('createAcpToolExecutor', () => {
   let preferencesUrl: string
   let seenAllowances: Array<Record<string, unknown>>
   let seenPurchases: Array<Record<string, unknown>>
+  let seenSearches: Array<Record<string, unknown>>
 
   function preferencesContext(buyerId = 'buyer_1'): PreferencesContext {
     return { baseUrl: preferencesUrl, buyerId, embedder: fakeEmbedder() }
@@ -127,10 +157,11 @@ describe('createAcpToolExecutor', () => {
   beforeEach(async () => {
     seenAllowances = []
     seenPurchases = []
+    seenSearches = []
     ;({ server: merchantServer, url: merchantUrl } = await listen(fakeMerchant()))
     ;({ server: pspServer, url: pspUrl } = await listen(fakePsp(seenAllowances)))
     ;({ server: preferencesServer, url: preferencesUrl } = await listen(
-      fakePreferences(seenPurchases),
+      fakePreferences(seenPurchases, seenSearches),
     ))
   })
 
@@ -338,6 +369,58 @@ describe('createAcpToolExecutor', () => {
     const execute = createAcpToolExecutor(new Map(), pspUrl, preferencesContext())
     await expect(execute('search_products', { query: 'anything' })).rejects.toThrow(
       /no merchants configured/,
+    )
+  })
+
+  it('recalls a relevant past purchase, embedding each query and scoping to buyer_id', async () => {
+    const execute = createAcpToolExecutor(
+      new Map([['mall-wart', merchantUrl]]),
+      pspUrl,
+      preferencesContext('buyer_42'),
+    )
+
+    const result = (await execute('recall_past_purchases', {
+      queries: ['toilet paper', 'something unrelated'],
+    })) as { results: Array<{ id: string; matches: Array<Record<string, unknown>> }> }
+
+    expect(result.results).toEqual([
+      {
+        id: 'toilet paper',
+        matches: [
+          expect.objectContaining({
+            purchase_id: 'pur_prior',
+            notes: 'User mentioned preferring unscented toilet paper.',
+          }),
+        ],
+      },
+      { id: 'something unrelated', matches: [] },
+    ])
+
+    expect(seenSearches).toEqual([
+      expect.objectContaining({
+        buyer_id: 'buyer_42',
+        queries: [
+          { id: 'toilet paper', embedding: [0, 0, 0] },
+          { id: 'something unrelated', embedding: [1, 0, 0] },
+        ],
+      }),
+    ])
+  })
+
+  it('passes merchant_id through to recall_past_purchases when given', async () => {
+    const execute = createAcpToolExecutor(
+      new Map([['mall-wart', merchantUrl]]),
+      pspUrl,
+      preferencesContext(),
+    )
+    await execute('recall_past_purchases', { queries: ['toilet paper'], merchant_id: 'mall-wart' })
+    expect(seenSearches).toEqual([expect.objectContaining({ merchant_id: 'mall-wart' })])
+  })
+
+  it('rejects recall_past_purchases without any queries', async () => {
+    const execute = createAcpToolExecutor(new Map(), pspUrl, preferencesContext())
+    await expect(execute('recall_past_purchases', { queries: [] })).rejects.toThrow(
+      /"queries" must be a non-empty array/,
     )
   })
 })
