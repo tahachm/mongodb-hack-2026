@@ -68,8 +68,13 @@ function lastAcceptedPlan(messages: StoredMessage[]): Record<string, unknown> | 
     for (const part of message.content) {
       if (part.type !== 'tool_call') continue
       const call = part as ToolCall
-      if (call.name !== 'record_audit_event' || failed.has(call.id)) continue
-      if (call.input.type === 'recommendation_plan') plan = call.input
+      if (failed.has(call.id)) continue
+      // record_recommendation_plan is the current tool; record_audit_event with
+      // type "recommendation_plan" is its predecessor, kept so older sessions still render.
+      const isPlan =
+        call.name === 'record_recommendation_plan' ||
+        (call.name === 'record_audit_event' && call.input.type === 'recommendation_plan')
+      if (isPlan) plan = call.input
     }
   }
   return plan

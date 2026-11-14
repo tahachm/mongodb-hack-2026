@@ -364,8 +364,7 @@ describe('createAcpToolExecutor', () => {
 
     // No updates_event_id and no follow_up_question at all -- models routinely leave out
     // fields whose value would be null.
-    const result = await execute('record_audit_event', {
-      type: 'history_insights',
+    const result = await execute('record_history_insights', {
       request: 'Some wigs, no questions asked.',
       insights: [],
       ignored_records: [],
