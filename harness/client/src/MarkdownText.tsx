@@ -14,6 +14,12 @@ export function MarkdownText({ text }: { text: string }) {
         ol: ({ children }) => <ol className="md-list">{children}</ol>,
         li: ({ children }) => <li className="md-li">{children}</li>,
         strong: ({ children }) => <strong className="md-strong">{children}</strong>,
+        // Product photos the agent includes as ![name](image_url). https only; anything else
+        // (relative paths, data: URIs) is dropped rather than rendered.
+        img: ({ src, alt }) =>
+          typeof src === 'string' && src.startsWith('https://') ? (
+            <img className="md-img" src={src} alt={alt ?? ''} loading="lazy" />
+          ) : null,
         a: ({ children, href }) => (
           <a className="md-link" href={href} target="_blank" rel="noreferrer">
             {children}
