@@ -143,6 +143,19 @@ def details_of(record: dict) -> dict:
     return details if isinstance(details, dict) else {}
 
 
+def image_url(record: dict) -> str | None:
+    """The product's main photo: the `MAIN` variant if tagged, else the first image. Prefers
+    `large` (~500px) over `hi_res` (often missing, and multi-MB) and `thumb` (too small)."""
+    images = [i for i in record.get("images") or [] if isinstance(i, dict)]
+    images.sort(key=lambda i: i.get("variant") != "MAIN")  # stable: MAIN first, else file order
+    for image in images:
+        for key in ("large", "hi_res", "thumb"):
+            url = image.get(key)
+            if isinstance(url, str) and url.startswith("https://"):
+                return url
+    return None
+
+
 def read_records(dataset: str, source_dir: Path | None) -> Iterator[dict]:
     if source_dir:
         stream = gzip.open(source_dir / f"meta_{dataset}.jsonl.gz", "rb")
@@ -172,7 +185,7 @@ def convert(record: dict, category: str, probs: dict[str, float]) -> dict | None
         if value:
             attributes[out_key] = value
 
-    return {
+    item = {
         "id": asin,
         "name": clip(title, MAX_NAME_LEN),
         "brand": clip(brand, MAX_ATTR_LEN),
@@ -183,6 +196,10 @@ def convert(record: dict, category: str, probs: dict[str, float]) -> dict | None
         "attributes": attributes,
         "merchantIds": assign_merchants(seeded_rng(RNG_SEED, asin), probs),
     }
+    url = image_url(record)
+    if url:
+        item["imageUrl"] = url
+    return item
 
 
 def build(source_dir: Path | None, per_category: int) -> list[dict]:
@@ -209,6 +226,8 @@ def print_stats(items: list[dict]) -> None:
     print(f"total items: {len(items):,}")
     for m, n in sorted(by_merchant.items()):
         print(f"  {m}: {n:,}")
+    with_image = sum(1 for it in items if "imageUrl" in it)
+    print(f"image coverage: {100 * with_image / max(len(items), 1):.0f}%")
     attrs = Counter(k for it in items for k in it["attributes"])
     print("attribute coverage:", ", ".join(f"{k} {100 * n / len(items):.0f}%" for k, n in attrs.most_common(8)))
 

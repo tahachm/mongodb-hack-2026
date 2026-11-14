@@ -14,6 +14,7 @@ data class CatalogItem(
     val currency: String,
     val attributes: Map<String, String> = emptyMap(),
     val merchantIds: List<String>,
+    val imageUrl: String? = null,
 )
 
 @Serializable

@@ -20,9 +20,11 @@ data class ProductView(
     @SerialName("price_cents") val priceCents: Int,
     val currency: String,
     val attributes: Map<String, String> = emptyMap(),
+    @SerialName("image_url") val imageUrl: String? = null,
 )
 
-fun CatalogItem.toProductView() = ProductView(id, name, brand, category, subcategory, priceCents, currency, attributes)
+fun CatalogItem.toProductView() =
+    ProductView(id, name, brand, category, subcategory, priceCents, currency, attributes, imageUrl)
 
 @Serializable
 data class ProductsResponse(@SerialName("merchant_id") val merchantId: String, val products: List<ProductView>)
