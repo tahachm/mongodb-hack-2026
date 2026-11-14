@@ -1,0 +1,111 @@
+# Brings up the whole ACP mock stack: psp, preferences, all five merchants, and the
+# harness server+client. Secrets/config come from a root .env (gitignored) -- copy
+# .env.example to .env and fill it in before `docker compose up`.
+#
+# Networking:
+# - psp/preferences/merchants are server-side only, reachable by other containers via the
+#   compose DNS name on their container-internal port; nothing published to the host.
+# - harness-server is published on 4000 so harness-client's dev server (running the app in
+#   your browser, outside the compose network) can reach it.
+# - harness-client is published on 5173 -- open http://localhost:5173.
+
+x-merchant-env: &merchant-env
+  PORT: "8080"
+  PSP_URL: http://psp:8081
+
+x-merchant-service: &merchant-service
+  build:
+    context: ./merchant
+  image: mongodb-hack-2026-merchant
+  depends_on:
+    - psp
+
+services:
+  psp:
+    build:
+      context: ./psp
+    environment:
+      PORT: "8081"
+
+  preferences:
+    build:
+      context: ./preferences
+    environment:
+      PORT: "8083"
+      MONGODB_URI: ${MONGODB_URI:?Set MONGODB_URI in .env -- requires MongoDB Atlas, local mongod doesn't support Vector Search}
+      MONGODB_DB: ${MONGODB_DB:-agentic_commerce}
+      EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-768}
+
+  merchant-mall-wart:
+    <<: *merchant-service
+    environment:
+      <<: *merchant-env
+      MERCHANT_ID: mall-wart
+
+  merchant-somefrills:
+    <<: *merchant-service
+    environment:
+      <<: *merchant-env
+      MERCHANT_ID: somefrills
+
+  merchant-wellgreens:
+    <<: *merchant-service
+    environment:
+      <<: *merchant-env
+      MERCHANT_ID: wellgreens
+
+  merchant-circuitspree:
+    <<: *merchant-service
+    environment:
+      <<: *merchant-env
+      MERCHANT_ID: circuitspree
+
+  merchant-threadbarn:
+    <<: *merchant-service
+    environment:
+      <<: *merchant-env
+      MERCHANT_ID: threadbarn
+
+  harness-server:
+    build:
+      context: ./harness
+      dockerfile: server/Dockerfile
+    ports:
+      - "4000:4000"
+    environment:
+      PORT: "4000"
+      LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:?Set GEMINI_API_KEY in .env -- see .env.example}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash-lite}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-haiku-5-5}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-004}
+      MERCHANT_URLS: >-
+        mall-wart=http://merchant-mall-wart:8080,
+        somefrills=http://merchant-somefrills:8080,
+        wellgreens=http://merchant-wellgreens:8080,
+        circuitspree=http://merchant-circuitspree:8080,
+        threadbarn=http://merchant-threadbarn:8080
+      PSP_URL: http://psp:8081
+      PREFERENCES_URL: http://preferences:8083
+    depends_on:
+      - psp
+      - preferences
+      - merchant-mall-wart
+      - merchant-somefrills
+      - merchant-wellgreens
+      - merchant-circuitspree
+      - merchant-threadbarn
+
+  harness-client:
+    build:
+      context: ./harness
+      dockerfile: client/Dockerfile
+    ports:
+      - "5173:5173"
+    environment:
+      # Resolved in the user's browser, not inside the compose network -- must be the
+      # published host URL for harness-server, not its container DNS name.
+      VITE_HARNESS_SERVER_URL: http://localhost:4000
+    depends_on:
+      - harness-server
