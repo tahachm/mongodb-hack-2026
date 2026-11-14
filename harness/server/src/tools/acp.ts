@@ -3,12 +3,17 @@ import type { ToolExecutor } from '../agent.js'
 import { type AuditEventLink, AuditEventStore } from '../auditEvents.js'
 import type { ToolDefinition } from '../llm.js'
 
+/** How many of each merchant's ranked matches search_products hands back to the model. */
+const MAX_PRODUCTS_PER_MERCHANT = 10
+
 export const acpTools: ToolDefinition[] = [
   {
     name: 'search_products',
     description:
       "Search every configured merchant's catalog for products matching a query. " +
-      'Returns matches grouped by merchant_id.',
+      `Returns up to ${MAX_PRODUCTS_PER_MERCHANT} best matches per merchant, grouped by ` +
+      'merchant_id, plus total_matches. If the top results miss what the buyer wants, ' +
+      'search again with a more specific query rather than expecting more results.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -451,8 +456,10 @@ function requireStringArray(input: Record<string, unknown>, key: string): string
   return value as string[]
 }
 
+/** Nullable fields may also be omitted entirely: models routinely leave out a field whose
+ * value would be null, and rejecting that just costs a full retry round trip. */
 function requireNullableString(input: Record<string, unknown>, key: string): string | null {
-  const value = input[key]
+  const value = input[key] ?? null
   if (value !== null && typeof value !== 'string') {
     throw new ToolInputError(`"${key}" must be a string or null`)
   }
@@ -637,8 +644,16 @@ export function createAcpToolExecutor(
       [...merchants.entries()].map(async ([merchantId, base]) => {
         const res = await fetch(`${base}/products?q=${encodeURIComponent(query)}`)
         if (!res.ok) return { merchant_id: merchantId, error: `HTTP ${res.status}` }
-        const body = (await res.json()) as { products?: unknown }
-        return { merchant_id: merchantId, products: body.products ?? [] }
+        const body = (await res.json()) as { products?: unknown[] }
+        const products = body.products ?? []
+        // Merchants return every match, already ranked by relevance. Only the top few go back
+        // to the model: the whole result is re-sent on every later model call in the turn, so
+        // an unbounded list (100k+ chars for a broad query) makes each call slow and costly.
+        return {
+          merchant_id: merchantId,
+          total_matches: products.length,
+          products: products.slice(0, MAX_PRODUCTS_PER_MERCHANT),
+        }
       }),
     )
     return { results }

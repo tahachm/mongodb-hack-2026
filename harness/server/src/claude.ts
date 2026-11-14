@@ -1,7 +1,9 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { ContentPart, LlmClient, LlmRequest, Turn } from './llm.js'
 
-const MAX_TOKENS = 1024
+// record_audit_event calls carry a lot of structured JSON; at 1024 they were routinely cut
+// off mid-call, arriving with missing fields and forcing a retry.
+const MAX_TOKENS = 4096
 
 function toAnthropicContent(parts: ContentPart[]): Anthropic.ContentBlockParam[] {
   return parts.map((part): Anthropic.ContentBlockParam => {
