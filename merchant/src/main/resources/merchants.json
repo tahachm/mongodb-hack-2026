@@ -1,0 +1,27 @@
+[
+  {
+    "id": "mall-wart",
+    "name": "Mall-Wart",
+    "tagline": "Everything, every day."
+  },
+  {
+    "id": "somefrills",
+    "name": "SomeFrills",
+    "tagline": "Groceries. No fuss."
+  },
+  {
+    "id": "wellgreens",
+    "name": "WellGreens",
+    "tagline": "Health, beauty, and more."
+  },
+  {
+    "id": "circuitspree",
+    "name": "CircuitSpree",
+    "tagline": "Tech for every budget."
+  },
+  {
+    "id": "threadbarn",
+    "name": "Thread Barn",
+    "tagline": "Wear it well."
+  }
+]
