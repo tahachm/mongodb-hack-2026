@@ -28,13 +28,13 @@ const MAX_OPTIONS = 3
 type ToolCall = Extract<ContentPart, { type: 'tool_call' }>
 type ToolResult = Extract<ContentPart, { type: 'tool_result' }>
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 /** Every product any search_products call returned in `messages`, by id. Later results win,
  * so a product's details are the freshest the agent saw. */
-function productsById(messages: StoredMessage[]): Map<string, Product> {
+export function productsById(messages: StoredMessage[]): Map<string, Product> {
   const products = new Map<string, Product>()
   for (const message of messages) {
     for (const part of message.content) {

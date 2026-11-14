@@ -227,3 +227,29 @@ describe('harness-server chat API', () => {
     ])
   })
 })
+
+describe('GET /sessions/:id/inspect', () => {
+  it("returns the inspect source's data for that session id", async () => {
+    const load = vi.fn(async (sessionId: string) => ({
+      available: true,
+      events: [
+        { event_id: 'e1', run_id: 'r1', seq: 1, at: 'now', type: 'history_insights', payload: { sessionId } },
+      ],
+      records: [],
+    }))
+    const app = createApp(fakeLlm([]), undefined, undefined, undefined, { load })
+    const res = await request(app).get('/sessions/abc/inspect').expect(200)
+    expect(load).toHaveBeenCalledWith('abc')
+    expect(res.body.events[0].payload).toEqual({ sessionId: 'abc' })
+  })
+
+  it('reports a 502 when loading fails', async () => {
+    const app = createApp(fakeLlm([]), undefined, undefined, undefined, {
+      load: async () => {
+        throw new Error('atlas down')
+      },
+    })
+    const res = await request(app).get('/sessions/abc/inspect').expect(502)
+    expect(res.body).toEqual({ error: 'inspect_failed', message: 'atlas down' })
+  })
+})

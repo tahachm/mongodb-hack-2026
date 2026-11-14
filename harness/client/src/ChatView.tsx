@@ -14,7 +14,13 @@ export function ChatView() {
     <>
       {!session && status === 'starting' && <p className="status-line">Starting a session…</p>}
 
-      {session && <ChatWindow messages={session.messages} pending={status === 'sending'} />}
+      {session && (
+        <ChatWindow
+          messages={session.messages}
+          pending={status === 'sending'}
+          onBuy={busy ? undefined : send}
+        />
+      )}
 
       {status === 'error' && error && <p className="status-line status-error">{error}</p>}
 

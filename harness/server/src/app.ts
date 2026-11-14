@@ -3,6 +3,7 @@ import express from 'express'
 import { runAgentTurn, type ToolExecutor } from './agent.js'
 import { AuditEventStore } from './auditEvents.js'
 import { config } from './config.js'
+import { MongoInspectSource, type InspectSource } from './inspect.js'
 import type { ContentPart, LlmClient, Turn } from './llm.js'
 import { SessionStore } from './sessions.js'
 import { SYSTEM_PROMPT } from './systemPrompt.js'
@@ -39,6 +40,15 @@ function defaultCreateToolExecutor(buyerId: string): ToolExecutor {
 
 function defaultTranscriptStore(): TranscriptStore {
   return new TranscriptStore(config.mongoUri, config.mongoDb, config.transcriptsCollection)
+}
+
+function defaultInspectSource(): InspectSource {
+  return new MongoInspectSource(
+    config.mongoUri,
+    config.mongoDb,
+    config.auditEventsCollection,
+    config.purchaseVectorsCollection,
+  )
 }
 
 function isToolResult(part: ContentPart): part is Extract<ContentPart, { type: 'tool_result' }> {
@@ -78,6 +88,7 @@ export function createApp(
   createToolExecutor: (buyerId: string) => ToolExecutor = defaultCreateToolExecutor,
   sessions: SessionStore = new SessionStore(),
   transcripts: TranscriptStore = defaultTranscriptStore(),
+  inspect: InspectSource = defaultInspectSource(),
 ) {
   const app = express()
   app.use(cors())
@@ -114,6 +125,21 @@ export function createApp(
       return
     }
     res.json(session)
+  })
+
+  // The inspection view's data: what the agent recorded about its reasoning in this session
+  // (audit_events) plus the saved preference records that reasoning cites (purchase_vectors).
+  // Doesn't require the in-memory session, so a session's reasoning stays inspectable after a
+  // server restart as long as the client still knows its id.
+  app.get('/sessions/:id/inspect', async (req, res) => {
+    try {
+      res.json(await inspect.load(req.params.id))
+    } catch (err) {
+      res.status(502).json({
+        error: 'inspect_failed',
+        message: err instanceof Error ? err.message : String(err),
+      })
+    }
   })
 
   app.post('/sessions/:id/messages', async (req, res) => {

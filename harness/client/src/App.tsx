@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { NavLink, Navigate, Route, Routes } from 'react-router'
+import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router'
 import './App.css'
 import { Background } from './Background'
 import { ChatView } from './ChatView'
@@ -10,6 +10,8 @@ import { useChatStore } from './store'
 function App() {
   const status = useChatStore((s) => s.status)
   const start = useChatStore((s) => s.start)
+  // The reasoning graph needs the full window width; chat stays a readable column.
+  const wide = useLocation().pathname === '/inspect'
 
   // Started here, not in ChatView, so switching between views keeps the same conversation.
   // `start` is a stable zustand action identity, so this still only fires once on mount.
@@ -22,7 +24,7 @@ function App() {
   return (
     <>
       <Background />
-      <main className="app">
+      <main className={`app${wide ? ' app-wide' : ''}`}>
         <header className="app-header">
           <div className="app-brand">
             <Logo />

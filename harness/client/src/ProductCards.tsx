@@ -14,7 +14,22 @@ function merchantLabel(id: string): string {
   return id.replace(/(^|-)([a-z])/g, (_, sep: string, c: string) => sep + c.toUpperCase())
 }
 
-function ProductCard({ option }: { option: ProductOption }) {
+/** What clicking a tile sends: a normal chat message naming the exact product and merchant,
+ * so the agent opens checkout and confirms the total before paying -- the click doesn't pay. */
+function buyMessage(option: ProductOption): string {
+  const merchant = option.merchantIds[0]
+  return `I'd like to buy the ${option.product.name}${merchant ? ` from ${merchantLabel(merchant)}` : ''} (product id ${option.product.id}).`
+}
+
+function ProductCard({
+  option,
+  onBuy,
+  disabled,
+}: {
+  option: ProductOption
+  onBuy?: (message: string) => void
+  disabled?: boolean
+}) {
   const { product } = option
   const attributeChips = CHIP_ATTRIBUTES.flatMap((key) => {
     const value = product.attributes?.[key]
@@ -22,7 +37,13 @@ function ProductCard({ option }: { option: ProductOption }) {
   }).slice(0, MAX_ATTRIBUTE_CHIPS)
 
   return (
-    <article className={`product-card${option.topPick ? ' product-card-top' : ''}`}>
+    <button
+      type="button"
+      className={`product-card${option.topPick ? ' product-card-top' : ''}`}
+      disabled={disabled || !onBuy}
+      onClick={() => onBuy?.(buyMessage(option))}
+      title={`Buy ${option.product.name}`}
+    >
       <div className="product-image">
         {product.image_url ? (
           <img src={product.image_url} alt={product.name} loading="lazy" />
@@ -35,9 +56,9 @@ function ProductCard({ option }: { option: ProductOption }) {
 
       <div className="product-body">
         <div className="product-price">{formatPrice(option.priceCents, product.currency)}</div>
-        <h3 className="product-name" title={product.name}>
+        <span className="product-name" title={product.name}>
           {product.name}
-        </h3>
+        </span>
         {product.brand && <div className="product-brand">{product.brand}</div>}
 
         <div className="product-chips">
@@ -53,22 +74,31 @@ function ProductCard({ option }: { option: ProductOption }) {
           ))}
         </div>
 
-        {option.why && <p className="product-why">{option.why}</p>}
+        {option.why && <span className="product-why">{option.why}</span>}
         {option.tradeoff && (
-          <p className="product-tradeoff">
+          <span className="product-tradeoff">
             <span>Tradeoff</span> {option.tradeoff}
-          </p>
+          </span>
         )}
+        <span className="product-buy">Buy this</span>
       </div>
-    </article>
+    </button>
   )
 }
 
-export function ProductCards({ options }: { options: ProductOption[] }) {
+export function ProductCards({
+  options,
+  onBuy,
+  disabled,
+}: {
+  options: ProductOption[]
+  onBuy?: (message: string) => void
+  disabled?: boolean
+}) {
   return (
     <div className="product-cards">
       {options.map((option) => (
-        <ProductCard key={option.product.id} option={option} />
+        <ProductCard key={option.product.id} option={option} onBuy={onBuy} disabled={disabled} />
       ))}
     </div>
   )

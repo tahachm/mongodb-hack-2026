@@ -8,9 +8,11 @@ import { TypingIndicator } from './TypingIndicator'
 export function ChatWindow({
   messages,
   pending,
+  onBuy,
 }: {
   messages: StoredMessage[]
   pending: boolean
+  onBuy?: (message: string) => void
 }) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const optionsByMessage = useMemo(() => productOptionsByMessage(messages), [messages])
@@ -35,7 +37,7 @@ export function ChatWindow({
                 <MarkdownText key={j} text={part.text} />
               ))}
             </div>
-            {options && <ProductCards options={options} />}
+            {options && <ProductCards options={options} onBuy={onBuy} disabled={pending} />}
           </Fragment>
         )
       })}
