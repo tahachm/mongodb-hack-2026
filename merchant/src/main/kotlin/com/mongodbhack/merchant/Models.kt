@@ -76,3 +76,9 @@ data class CreateSessionRequest(val items: List<ItemRef> = emptyList(), val buye
 
 @Serializable
 data class UpdateSessionRequest(val items: List<ItemRef>? = null)
+
+@Serializable
+data class PaymentData(val token: String)
+
+@Serializable
+data class CompleteSessionRequest(@SerialName("payment_data") val paymentData: PaymentData)

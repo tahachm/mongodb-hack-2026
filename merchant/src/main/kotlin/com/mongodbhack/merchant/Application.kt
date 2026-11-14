@@ -88,6 +88,17 @@ fun Application.module() {
             call.idempotent("update:$id", rawBody) { updateSession(id, req) }
         }
 
+        post("/checkout_sessions/{id}/complete") {
+            val id = call.parameters["id"]!!
+            val rawBody = call.receiveText()
+            val req = runCatching { json.decodeFromString(CompleteSessionRequest.serializer(), rawBody) }.getOrNull()
+            if (req == null) {
+                call.respondJsonError(HttpStatusCode.BadRequest, "invalid_json", "request body must be valid JSON")
+                return@post
+            }
+            call.idempotent("complete:$id", rawBody) { completeSession(id, req) }
+        }
+
         post("/checkout_sessions/{id}/cancel") {
             val id = call.parameters["id"]!!
             val rawBody = runCatching { call.receiveText() }.getOrDefault("")
@@ -172,6 +183,36 @@ private fun updateSession(id: String, req: UpdateSessionRequest): Pair<HttpStatu
     }
     SessionStore.put(updated)
     return HttpStatusCode.OK to json.encodeToJsonElement(CheckoutSession.serializer(), updated)
+}
+
+private suspend fun completeSession(id: String, req: CompleteSessionRequest): Pair<HttpStatusCode, JsonElement> {
+    val existing = SessionStore.get(id) ?: return HttpStatusCode.NotFound to apiError("not_found", "session not found")
+    if (existing.status != "ready_for_payment") {
+        return HttpStatusCode.MethodNotAllowed to apiError("session_closed", "session is ${existing.status}")
+    }
+    val total = existing.totals.first { it.type == "total" }.amount.toLong()
+    val outcome = try {
+        redeemToken(req.paymentData.token, id, total, existing.currency)
+    } catch (e: Exception) {
+        return HttpStatusCode.ServiceUnavailable to apiError(
+            "payment_provider_unavailable",
+            e.message ?: "could not reach payment provider",
+            type = "service_unavailable",
+        )
+    }
+    if (!outcome.ok) {
+        return HttpStatusCode.PaymentRequired to apiError("payment_declined", outcome.reason)
+    }
+    val completed = existing.copy(
+        status = "completed",
+        order = Order(
+            id = "ord_" + randomHex(6),
+            checkoutSessionId = id,
+            permalinkUrl = "https://${Config.merchantId}.example.com/orders/$id",
+        ),
+    )
+    SessionStore.put(completed)
+    return HttpStatusCode.OK to json.encodeToJsonElement(CheckoutSession.serializer(), completed)
 }
 
 private fun cancelSession(id: String, intentTrace: JsonElement?): Pair<HttpStatusCode, JsonElement> {

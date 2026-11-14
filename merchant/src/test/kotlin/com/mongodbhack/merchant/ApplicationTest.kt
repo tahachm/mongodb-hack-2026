@@ -8,6 +8,11 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import io.ktor.server.engine.embeddedServer
+import io.ktor.server.netty.Netty
+import io.ktor.server.response.respondText
+import io.ktor.server.routing.post
+import io.ktor.server.routing.routing
 import io.ktor.server.testing.testApplication
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
@@ -206,4 +211,134 @@ class ApplicationTest {
         assertEquals(HttpStatusCode.MethodNotAllowed, update.status)
         assertEquals("session_closed", Json.parseToJsonElement(update.bodyAsText()).jsonObject["code"]!!.jsonPrimitive.content)
     }
+
+    /** Starts a throwaway fake PSP on `port` that always answers /tokens/{id}/redeem with
+     * `outcome`, points Config.pspUrl() at it for the duration of `block`, then tears both
+     * down. Each test picks its own port so they can run (and fail) independently. */
+    private fun withFakePsp(outcome: RedeemOutcome, port: Int, block: () -> Unit) {
+        val server = embeddedServer(Netty, port = port) {
+            routing {
+                post("/tokens/{id}/redeem") {
+                    call.respondText(json.encodeToString(RedeemOutcome.serializer(), outcome), ContentType.Application.Json)
+                }
+            }
+        }
+        server.start(wait = false)
+        System.setProperty("psp.url", "http://127.0.0.1:$port")
+        try {
+            block()
+        } finally {
+            server.stop(100, 200)
+            System.clearProperty("psp.url")
+        }
+    }
+
+    @Test
+    fun `complete_session marks the session completed when the PSP approves`() = withFakePsp(RedeemOutcome(true, "ok"), 28101) {
+        testApplication {
+            application { module() }
+            val created = client.post("/checkout_sessions") {
+                contentType(ContentType.Application.Json)
+                header("Idempotency-Key", "cp1")
+                setBody("""{"items": [{"id": "groceries-00001", "quantity": 1}]}""")
+            }
+            val sessionId = Json.parseToJsonElement(created.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
+
+            val completed = client.post("/checkout_sessions/$sessionId/complete") {
+                contentType(ContentType.Application.Json)
+                header("Idempotency-Key", "cp2")
+                setBody("""{"payment_data": {"token": "vt_whatever"}}""")
+            }
+            assertEquals(HttpStatusCode.OK, completed.status)
+            val body = Json.parseToJsonElement(completed.bodyAsText()).jsonObject
+            assertEquals("completed", body["status"]!!.jsonPrimitive.content)
+            assertEquals(sessionId, body["order"]!!.jsonObject["checkout_session_id"]!!.jsonPrimitive.content)
+        }
+    }
+
+    @Test
+    fun `complete_session is declined when the PSP rejects the token`() =
+        withFakePsp(RedeemOutcome(false, "amount exceeds allowance max_amount 100"), 28102) {
+            testApplication {
+                application { module() }
+                val created = client.post("/checkout_sessions") {
+                    contentType(ContentType.Application.Json)
+                    header("Idempotency-Key", "cp3")
+                    setBody("""{"items": [{"id": "groceries-00001", "quantity": 1}]}""")
+                }
+                val sessionId = Json.parseToJsonElement(created.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
+
+                val completed = client.post("/checkout_sessions/$sessionId/complete") {
+                    contentType(ContentType.Application.Json)
+                    header("Idempotency-Key", "cp4")
+                    setBody("""{"payment_data": {"token": "vt_whatever"}}""")
+                }
+                assertEquals(HttpStatusCode.PaymentRequired, completed.status)
+                val body = Json.parseToJsonElement(completed.bodyAsText()).jsonObject
+                assertEquals("payment_declined", body["code"]!!.jsonPrimitive.content)
+                assertTrue(body["message"]!!.jsonPrimitive.content.contains("exceeds allowance"))
+
+                // declined payment leaves the session open for a retry with a fresh token
+                val session = client.get("/checkout_sessions/$sessionId")
+                assertEquals("ready_for_payment", Json.parseToJsonElement(session.bodyAsText()).jsonObject["status"]!!.jsonPrimitive.content)
+            }
+        }
+
+    @Test
+    fun `complete_session returns 503 when the PSP is unreachable`() = testApplication {
+        application { module() }
+        System.setProperty("psp.url", "http://127.0.0.1:28103") // nothing listening here
+        try {
+            val created = client.post("/checkout_sessions") {
+                contentType(ContentType.Application.Json)
+                header("Idempotency-Key", "cp5")
+                setBody("""{"items": [{"id": "groceries-00001", "quantity": 1}]}""")
+            }
+            val sessionId = Json.parseToJsonElement(created.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
+
+            val completed = client.post("/checkout_sessions/$sessionId/complete") {
+                contentType(ContentType.Application.Json)
+                header("Idempotency-Key", "cp6")
+                setBody("""{"payment_data": {"token": "vt_whatever"}}""")
+            }
+            assertEquals(HttpStatusCode.ServiceUnavailable, completed.status)
+            assertEquals(
+                "payment_provider_unavailable",
+                Json.parseToJsonElement(completed.bodyAsText()).jsonObject["code"]!!.jsonPrimitive.content,
+            )
+        } finally {
+            System.clearProperty("psp.url")
+        }
+    }
+
+    @Test
+    fun `complete_session rejects a session that is not ready_for_payment`() =
+        withFakePsp(RedeemOutcome(true, "ok"), 28104) {
+            testApplication {
+                application { module() }
+                val created = client.post("/checkout_sessions") {
+                    contentType(ContentType.Application.Json)
+                    header("Idempotency-Key", "cp7")
+                    setBody("""{"items": [{"id": "groceries-00001", "quantity": 1}]}""")
+                }
+                val sessionId = Json.parseToJsonElement(created.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
+                client.post("/checkout_sessions/$sessionId/cancel") {
+                    contentType(ContentType.Application.Json)
+                    header("Idempotency-Key", "cp8")
+                    setBody("""{}""")
+                }
+
+                val completed = client.post("/checkout_sessions/$sessionId/complete") {
+                    contentType(ContentType.Application.Json)
+                    header("Idempotency-Key", "cp9")
+                    setBody("""{"payment_data": {"token": "vt_whatever"}}""")
+                }
+                assertEquals(HttpStatusCode.MethodNotAllowed, completed.status)
+                assertEquals(
+                    "session_closed",
+                    Json.parseToJsonElement(completed.bodyAsText()).jsonObject["code"]!!.jsonPrimitive.content,
+                )
+            }
+        }
+
 }
