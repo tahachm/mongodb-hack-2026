@@ -247,9 +247,7 @@
 .typing-indicator {
   display: flex;
   gap: 5px;
-  align-self: flex-start;
-  padding: 0.6rem 0.2rem;
-  margin-left: 0.2rem;
+  padding: 0.1rem 0.2rem;
 }
 
 .typing-indicator span {

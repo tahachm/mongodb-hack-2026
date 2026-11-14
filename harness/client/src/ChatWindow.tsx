@@ -1,13 +1,20 @@
 import { useEffect, useRef } from 'react'
 import type { StoredMessage } from './api'
 import { MarkdownText } from './MarkdownText'
+import { TypingIndicator } from './TypingIndicator'
 
-export function ChatWindow({ messages }: { messages: StoredMessage[] }) {
+export function ChatWindow({
+  messages,
+  pending,
+}: {
+  messages: StoredMessage[]
+  pending: boolean
+}) {
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+  }, [messages, pending])
 
   return (
     <div className="chat-window">
@@ -25,6 +32,11 @@ export function ChatWindow({ messages }: { messages: StoredMessage[] }) {
           </div>
         )
       })}
+      {pending && (
+        <div className="message message-assistant message-pending">
+          <TypingIndicator />
+        </div>
+      )}
       <div ref={bottomRef} />
     </div>
   )
