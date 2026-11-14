@@ -51,6 +51,13 @@ function fakeMerchant() {
 
   app.get('/products', (req, res) => {
     const q = String(req.query.q ?? '')
+    if (q.includes('cable')) {
+      // A broad query with more matches than search_products hands back to the model.
+      res.json({
+        products: Array.from({ length: 25 }, (_, i) => ({ id: `c-${i}`, name: 'Cable' })),
+      })
+      return
+    }
     res.json({ products: q.includes('mouse') ? [{ id: 'm-1', name: 'Wireless Mouse' }] : [] })
   })
 
@@ -199,8 +206,28 @@ describe('createAcpToolExecutor', () => {
       results: Array<{ merchant_id: string; products: unknown[] }>
     }
     expect(result.results).toEqual([
-      { merchant_id: 'mall-wart', products: [{ id: 'm-1', name: 'Wireless Mouse' }] },
+      {
+        merchant_id: 'mall-wart',
+        total_matches: 1,
+        products: [{ id: 'm-1', name: 'Wireless Mouse' }],
+      },
     ])
+  })
+
+  it('returns only the top 10 matches per merchant, with the full match count', async () => {
+    const execute = createExecutor(
+      new Map([['mall-wart', merchantUrl]]),
+      pspUrl,
+      preferencesContext(),
+    )
+    const result = (await execute('search_products', { query: 'cable' })) as {
+      results: Array<{ total_matches: number; products: Array<{ id: string }> }>
+    }
+    expect(result.results[0].total_matches).toBe(25)
+    // Merchants return matches ranked by relevance, so the first 10 are the ones kept.
+    expect(result.results[0].products.map((p) => p.id)).toEqual(
+      Array.from({ length: 10 }, (_, i) => `c-${i}`),
+    )
   })
 
   it('rejects an unknown merchant_id with the list of configured ones', async () => {
@@ -327,6 +354,31 @@ describe('createAcpToolExecutor', () => {
       input,
       { type: 'history_insights', updatesEventId: null },
       { sessionId: 'buyer_42', buyerId: 'buyer_42' },
+    )
+  })
+
+  it('treats omitted nullable fields in history_insights as null', async () => {
+    const record = vi.fn().mockResolvedValue({ event_id: 'evt_1', seq: 1 })
+    const auditEvents = { record, close: vi.fn() } as unknown as AuditEventStore
+    const execute = createAcpToolExecutor(new Map(), pspUrl, preferencesContext(), auditEvents)
+
+    // No updates_event_id and no follow_up_question at all -- models routinely leave out
+    // fields whose value would be null.
+    const result = await execute('record_audit_event', {
+      type: 'history_insights',
+      request: 'Some wigs, no questions asked.',
+      insights: [],
+      ignored_records: [],
+      gaps: [],
+      assumptions: [],
+      summary: 'Wants wigs; nothing in history.',
+    })
+
+    expect(result).toEqual({ event_id: 'evt_1', seq: 1 })
+    expect(record).toHaveBeenCalledWith(
+      expect.anything(),
+      { type: 'history_insights', updatesEventId: null },
+      expect.anything(),
     )
   })
 
