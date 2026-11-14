@@ -12,8 +12,13 @@ Kotlin/Ktor service.
   selects which of the five parody merchants in `merchants.json` it serves; `PORT` picks
   the port, default 8080). All merchant processes read the same generated `catalog.json`
   and filter by the `merchantIds` tag on each item, so running N instances keeps them in
-  sync with one source of truth. `merchant/tools/generate_catalog.py` (uv script)
-  regenerates `src/main/resources/{catalog,merchants}.json` deterministically.
+  sync with one source of truth. The bundled `catalog.json` is 10,000 real Amazon Reviews
+  2023 products (5k fashion from `Clothing_Shoes_and_Jewelry`, 5k beauty from
+  `Beauty_and_Personal_Care`, priced records only), built by `merchant/tools/amazon_catalog.py`
+  (uv script, streams the dataset). Fashion is carried by threadbarn, beauty by wellgreens,
+  mall-wart carries a share of both; somefrills and circuitspree carry nothing.
+  `merchant/tools/generate_catalog.py` still regenerates the old synthetic catalog
+  deterministically (and `merchants.json`).
 - `psp/` — ACP payment service provider mock (`delegate_payment` / `vt_` tokens), default
   port 8081.
 - `preferences/` — past-purchase vector store, backed by MongoDB Atlas Vector Search.
