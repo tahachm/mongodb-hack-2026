@@ -1,6 +1,8 @@
-import { useEffect, useRef } from 'react'
+import { Fragment, useEffect, useMemo, useRef } from 'react'
 import type { StoredMessage } from './api'
 import { MarkdownText } from './MarkdownText'
+import { ProductCards } from './ProductCards'
+import { productOptionsByMessage } from './productOptions'
 import { TypingIndicator } from './TypingIndicator'
 
 export function ChatWindow({
@@ -11,6 +13,7 @@ export function ChatWindow({
   pending: boolean
 }) {
   const bottomRef = useRef<HTMLDivElement>(null)
+  const optionsByMessage = useMemo(() => productOptionsByMessage(messages), [messages])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -23,13 +26,17 @@ export function ChatWindow({
         // Tool calls/results are plumbing, not something the human said or should see --
         // skip the row entirely when a turn has no text (e.g. a pure tool_result turn).
         if (textParts.length === 0) return null
+        const options = optionsByMessage.get(i)
 
         return (
-          <div key={i} className={`message message-${message.role}`}>
-            {textParts.map((part, j) => (
-              <MarkdownText key={j} text={part.text} />
-            ))}
-          </div>
+          <Fragment key={i}>
+            <div className={`message message-${message.role}`}>
+              {textParts.map((part, j) => (
+                <MarkdownText key={j} text={part.text} />
+              ))}
+            </div>
+            {options && <ProductCards options={options} />}
+          </Fragment>
         )
       })}
       {pending && (
