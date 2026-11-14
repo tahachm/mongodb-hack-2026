@@ -9,8 +9,8 @@ import { createAcpToolExecutor, type PreferencesContext } from './acp.js'
  * AuditEventStore's shape so createAcpToolExecutor can be constructed. The real run_id/seq/
  * hash-chain resolution lives in auditEvents.ts and needs a live MongoDB to exercise, which
  * this test suite deliberately avoids (same convention as preferences/ApplicationTest.kt --
- * see record_audit_event's own dedicated tests below for what this file does verify: that
- * acp.ts validates input and delegates to the store correctly). */
+ * see record_history_insights/record_recommendation_plan's own dedicated tests below for
+ * what this file does verify: that acp.ts validates input and delegates to the store correctly). */
 function fakeAuditEventStore(): AuditEventStore {
   let seq = 0
   return {
@@ -23,7 +23,7 @@ function fakeAuditEventStore(): AuditEventStore {
 }
 
 /** createAcpToolExecutor with a throwaway fake AuditEventStore, for every test that isn't
- * specifically about record_audit_event's acp.ts-side wiring. */
+ * specifically about record_history_insights/record_recommendation_plan's acp.ts-side wiring. */
 function createExecutor(
   merchants: Map<string, string>,
   pspUrl: string,
@@ -294,7 +294,6 @@ describe('createAcpToolExecutor', () => {
     )
 
     const input = {
-      type: 'history_insights',
       updates_event_id: null,
       request: 'A comfortable hoodie. No size, colour, budget or occasion given.',
       insights: [
@@ -318,7 +317,7 @@ describe('createAcpToolExecutor', () => {
       follow_up_question: null,
       summary: 'They want a comfortable hoodie; history shows size M and dark colours.',
     }
-    const result = await execute('record_audit_event', input)
+    const result = await execute('record_history_insights', input)
 
     // The store's {event_id, seq} is returned as is -- acp.ts doesn't generate its own.
     expect(result).toEqual({ event_id: 'evt_1', seq: 1 })
@@ -336,8 +335,7 @@ describe('createAcpToolExecutor', () => {
     const auditEvents = { record, close: vi.fn() } as unknown as AuditEventStore
     const execute = createAcpToolExecutor(new Map(), pspUrl, preferencesContext(), auditEvents)
 
-    await execute('record_audit_event', {
-      type: 'recommendation_plan',
+    await execute('record_recommendation_plan', {
       insights_event_id: 'evt_6d2e91a4c07b',
       searches: ['hoodie', 'hooded'],
       options: [
@@ -367,18 +365,10 @@ describe('createAcpToolExecutor', () => {
     )
   })
 
-  it('rejects record_audit_event with an unknown type', async () => {
-    const execute = createExecutor(new Map(), pspUrl, preferencesContext())
-    await expect(execute('record_audit_event', { type: 'something_else' })).rejects.toThrow(
-      /"type" must be one of: history_insights, recommendation_plan/,
-    )
-  })
-
   it('rejects history_insights with a bad confidence value, naming which insight', async () => {
     const execute = createExecutor(new Map(), pspUrl, preferencesContext())
     await expect(
-      execute('record_audit_event', {
-        type: 'history_insights',
+      execute('record_history_insights', {
         updates_event_id: null,
         request: 'req',
         insights: [{ facet: 'size', finding: 'f', evidence: [], confidence: 'certain' }],
@@ -394,8 +384,7 @@ describe('createAcpToolExecutor', () => {
   it('rejects recommendation_plan missing a required option field', async () => {
     const execute = createExecutor(new Map(), pspUrl, preferencesContext())
     await expect(
-      execute('record_audit_event', {
-        type: 'recommendation_plan',
+      execute('record_recommendation_plan', {
         insights_event_id: 'evt_1',
         searches: ['hoodie'],
         options: [{ option_number: 1, product_id: 'p-1' }],

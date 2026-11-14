@@ -6,7 +6,7 @@ import { createGeminiClient } from './gemini.js'
 
 const llm =
   config.provider === 'anthropic'
-    ? createClaudeClient(config.anthropic.apiKey, config.anthropic.model)
+    ? createClaudeClient(config.anthropic.apiKey, config.anthropic.model, config.anthropic.maxTokens)
     : createGeminiClient(config.gemini.apiKey, config.gemini.model)
 
 const app = createApp(llm)

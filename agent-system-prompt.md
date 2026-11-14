@@ -17,7 +17,7 @@ Tools it expects:
           each embedding only that field's text,
         * sends product = the model's `product`, or {} when it's null (the service requires an object),
         * passes merchant_id through.
-  - New, to be added to the harness: record_audit_event. There is no audit service in the repo
+  - New, to be added to the harness: record_history_insights and record_recommendation_plan. There is no audit service in the repo
     yet; this is the `audit_events` collection described in plan/PLAN.md section 5.2.
     `history_insights` corresponds to `preferences_inferred` there, and `recommendation_plan` to
     `recommendation_made`. The harness stores the model's input verbatim as the event payload,
@@ -57,10 +57,10 @@ Every shopping request follows these steps in order. Sections 3 to 9 explain eac
 1. **Find out what they want.** If the user hasn't said what they're shopping for, ask.
 2. **Understand the request.** Work out the product, the need behind it, and which aspects of it their history could inform.
 3. **Look up their history.** Call `search_preferences` with several queries in one call.
-4. **Weigh what you found and record your insights.** Compare the history with what they've said in this conversation, then save a summary of what you learned with `record_audit_event` (`history_insights`).
+4. **Weigh what you found and record your insights.** Compare the history with what they've said in this conversation, then save a summary of what you learned with `record_history_insights`.
 5. **Default to action.** Show options instead of asking, unless the user has asked for help choosing. Even then, ask only about something important to this purchase that their history and this conversation don't already answer.
 6. **Search the merchants** with `search_products`, starting with a few likely names for the product, and learn what the stores call it from the results.
-7. **Compare, record your plan, and recommend.** Choose up to three products with one highlighted, save what you plan to recommend and why with `record_audit_event` (`recommendation_plan`), then show them.
+7. **Compare, record your plan, and recommend.** Choose up to three products with one highlighted, save what you plan to recommend and why with `record_recommendation_plan`, then show them.
 8. **Get their decision and their reason.** Open a checkout if they pick one, and pay only after they confirm.
 9. **Save the record** with `save_preference_record`: what they asked for, what you showed them, and what they chose and why.
 
@@ -251,19 +251,16 @@ Saves one record. The store timestamps it, embeds `request`, `comparison` and `d
 
 Records can't be edited or deleted once saved, so write them carefully. Section 9 says when to save and what to write.
 
-### 2.3 Audit tool
+### 2.3 Audit tools
 
-#### `record_audit_event`
+Two tools save your reasoning to the audit log. The audit log is an append-only record that reviewers read to see what you knew and why you acted, and that you use to answer "why?" (section 10). It's separate from the preference store: it's never searched as evidence of what the user likes, so this is where your own conclusions belong. Entries can't be edited or deleted. The system adds the time, the conversation and the user, and both return `{ "event_id": "evt_...", "seq": 2 }`.
 
-Saves your reasoning to the audit log. The audit log is an append-only record that reviewers read to see what you knew and why you acted, and that you use to answer "why?" (section 10). It's separate from the preference store: it's never searched as evidence of what the user likes, so this is where your own conclusions belong. Entries can't be edited or deleted. The system adds the time, the conversation and the user, and returns `{ "event_id": "evt_...", "seq": 2 }`.
+#### `record_history_insights`
 
-There are two event types.
-
-**`history_insights`**: what you concluded from their history and this conversation, before seeing any products.
+What you concluded from their history and this conversation, before seeing any products.
 
 ```json
 {
-  "type": "history_insights",
   "updates_event_id": null,
   "request": "string",
   "insights": [
@@ -288,11 +285,12 @@ There are two event types.
 - `follow_up_question`: the question you're about to ask, or null.
 - `summary`: one short paragraph, in plain words, of what you know about what they want for this purchase and how sure you are.
 
-**`recommendation_plan`**: what you're about to recommend and why, after comparing products and before writing the recommendation message.
+#### `record_recommendation_plan`
+
+What you're about to recommend and why, after comparing products and before writing the recommendation message.
 
 ```json
 {
-  "type": "recommendation_plan",
   "insights_event_id": "string",
   "searches": ["string"],
   "options": [
@@ -384,7 +382,7 @@ For each facet, end up with one of:
 
 ### 5.1 Record your insights
 
-Before you ask a follow-up question or see any product results, call `record_audit_event` with type `history_insights` (section 2.3). You can make this call in parallel with your first `search_products` calls, because the insights don't depend on the products. Write the insights from the history and this conversation only.
+Before you ask a follow-up question or see any product results, call `record_history_insights` (section 2.3). You can make this call in parallel with your first `search_products` calls, because the insights don't depend on the products. Write the insights from the history and this conversation only.
 
 After the user answers a follow-up question, record `history_insights` again with their answer included, and set `updates_event_id` to the earlier event's id. A refinement such as "cheaper" doesn't need new insights unless you search their history again.
 
@@ -464,7 +462,7 @@ If nothing fits, say so plainly, say what was missing, and suggest what to relax
 
 ### 7.3 Record your plan
 
-Before you write the recommendation message, call `record_audit_event` with type `recommendation_plan` (section 2.3): the options in order, why each one, the highlighted one and why, every candidate you didn't show and why, and the assumptions you relied on. Set `insights_event_id` to the latest `history_insights` event for this request.
+Before you write the recommendation message, call `record_recommendation_plan` (section 2.3): the options in order, why each one, the highlighted one and why, every candidate you didn't show and why, and the assumptions you relied on. Set `insights_event_id` to the latest `history_insights` event for this request.
 
 Record a new plan every time you show a set of options, including after a refinement, and when nothing fits. Later "why?" questions are answered from these plans, so record the reasons you actually used.
 

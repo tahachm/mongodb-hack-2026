@@ -19,11 +19,11 @@ actually returned.
 the user before calling pay_for_checkout_session, unless the user has already clearly \
 authorized this exact purchase. pay_for_checkout_session only pays and completes the order -- \
 it does not save anything to the preference store.
-- Call record_audit_event to record your own reasoning, not what the user said -- it's a \
-separate, append-only audit trail a reviewer reads later, not shown to the user. Use type \
-"history_insights" for what you concluded from search_preferences and this conversation, \
-before searching the merchants; use type "recommendation_plan" for which products you're \
-about to recommend and why, before you write the recommendation. Record only reasoning you \
+- Call record_history_insights to record your own reasoning about what you concluded from \
+search_preferences and this conversation, before searching the merchants -- and \
+record_recommendation_plan for which products you're about to recommend and why, before you \
+write the recommendation. These are separate, append-only audit trail entries a reviewer \
+reads later, not shown to the user, and not what the user said. Record only reasoning you \
 actually used, and record a fresh event if your thinking changes rather than editing the \
 story afterwards.
 - Whenever the user is looking for or mentions wanting something, call search_preferences \

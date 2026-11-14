@@ -42,42 +42,35 @@ export const acpTools: ToolDefinition[] = [
     },
   },
   {
-    name: 'record_audit_event',
+    name: 'record_history_insights',
     description:
-      'Append an event to the audit log -- an append-only record a reviewer reads to see ' +
-      'what you knew and why you acted, and that you use to answer "why?" later. Separate ' +
-      "from the preference store: it's never searched as evidence of what the buyer likes, " +
-      "so this is where your own conclusions belong. Entries can't be edited or deleted. " +
-      'Returns { event_id, seq }.\n\n' +
-      'Two event types, chosen with "type":\n' +
-      '- "history_insights": what you concluded from the buyer\'s history and this ' +
-      'conversation, before seeing any products. Record this before asking a follow-up or ' +
-      'reading product results.\n' +
-      '- "recommendation_plan": what you are about to recommend and why, after comparing ' +
-      'products and before writing the recommendation message. Record this before showing ' +
-      'options.',
+      'Append a "history_insights" event to the audit log -- an append-only record a ' +
+      'reviewer reads to see what you knew and why you acted, and that you use to answer ' +
+      '"why?" later. Separate from the preference store: never searched as evidence of ' +
+      "what the buyer likes, so this is where your own conclusions belong. Entries can't " +
+      'be edited or deleted. Returns { event_id, seq }.\n\n' +
+      "What you concluded from the buyer's history and this conversation, before seeing " +
+      'any products. Record this before asking a follow-up or reading product results. ' +
+      'You can call this in parallel with your first search_products calls, since the ' +
+      "insights don't depend on the products.",
     inputSchema: {
       type: 'object',
       properties: {
-        type: {
-          type: 'string',
-          enum: ['history_insights', 'recommendation_plan'],
-        },
         updates_event_id: {
           type: ['string', 'null'],
           description:
-            '(history_insights only) null for the first insights of a request; the earlier ' +
-            "event's id when revising insights after the buyer answers a follow-up.",
+            'null for the first insights of a request; the earlier event\'s id when ' +
+            'revising insights after the buyer answers a follow-up.',
         },
         request: {
           type: 'string',
           description:
-            '(history_insights only) the request as you understand it, including anything ' +
-            'said about it in this conversation.',
+            'The request as you understand it, including anything said about it in this ' +
+            'conversation.',
         },
         insights: {
           type: 'array',
-          description: '(history_insights only) one entry per facet the evidence settles.',
+          description: 'One entry per facet the evidence settles.',
           items: {
             type: 'object',
             properties: {
@@ -95,7 +88,7 @@ export const acpTools: ToolDefinition[] = [
         },
         ignored_records: {
           type: 'array',
-          description: '(history_insights only) records returned by search but not used.',
+          description: 'Records returned by search but not used.',
           items: {
             type: 'object',
             properties: {
@@ -107,7 +100,7 @@ export const acpTools: ToolDefinition[] = [
         },
         gaps: {
           type: 'array',
-          description: '(history_insights only) every facet with no relevant evidence.',
+          description: 'Every facet with no relevant evidence.',
           items: {
             type: 'object',
             properties: {
@@ -122,27 +115,54 @@ export const acpTools: ToolDefinition[] = [
         assumptions: {
           type: 'array',
           items: { type: 'string' },
-          description: '(history_insights only) defaults stated to the buyer instead of asking.',
+          description: 'Defaults stated to the buyer instead of asking.',
         },
         follow_up_question: {
           type: ['string', 'null'],
-          description: '(history_insights only) the question you are about to ask, or null.',
+          description: 'The question you are about to ask, or null.',
         },
+        summary: {
+          type: 'string',
+          description: 'One short paragraph/sentence summarizing this event.',
+        },
+      },
+      required: [
+        'updates_event_id',
+        'request',
+        'insights',
+        'ignored_records',
+        'gaps',
+        'assumptions',
+        'follow_up_question',
+        'summary',
+      ],
+    },
+  },
+  {
+    name: 'record_recommendation_plan',
+    description:
+      'Append a "recommendation_plan" event to the audit log -- an append-only record a ' +
+      'reviewer reads to see what you knew and why you acted, and that you use to answer ' +
+      '"why?" later. Separate from the preference store: never searched as evidence of ' +
+      "what the buyer likes, so this is where your own conclusions belong. Entries can't " +
+      'be edited or deleted. Returns { event_id, seq }.\n\n' +
+      'What you are about to recommend and why, after comparing products and before ' +
+      'writing the recommendation message. Record this before showing options.',
+    inputSchema: {
+      type: 'object',
+      properties: {
         insights_event_id: {
           type: 'string',
-          description:
-            '(recommendation_plan only) the event_id of the latest history_insights for ' +
-            'this request.',
+          description: 'The event_id of the latest history_insights event for this request.',
         },
         searches: {
           type: 'array',
           items: { type: 'string' },
-          description: '(recommendation_plan only) the queries sent to search_products.',
+          description: 'The queries sent to search_products.',
         },
         options: {
           type: 'array',
-          description:
-            '(recommendation_plan only) what you will show, in order, highlighted one first.',
+          description: 'What you will show, in order, highlighted one first.',
           items: {
             type: 'object',
             properties: {
@@ -167,15 +187,11 @@ export const acpTools: ToolDefinition[] = [
             ],
           },
         },
-        highlighted_product_id: {
-          type: ['string', 'null'],
-          description: '(recommendation_plan only)',
-        },
-        highlight_reason: { type: ['string', 'null'], description: '(recommendation_plan only)' },
+        highlighted_product_id: { type: ['string', 'null'] },
+        highlight_reason: { type: ['string', 'null'] },
         not_shown: {
           type: 'array',
-          description:
-            '(recommendation_plan only) every candidate considered and not shown, with why.',
+          description: 'Every candidate considered and not shown, with why.',
           items: {
             type: 'object',
             properties: {
@@ -185,23 +201,28 @@ export const acpTools: ToolDefinition[] = [
             required: ['product_id', 'reason'],
           },
         },
-        assumptions_relied_on: {
-          type: 'array',
-          items: { type: 'string' },
-          description: '(recommendation_plan only)',
-        },
+        assumptions_relied_on: { type: 'array', items: { type: 'string' } },
         no_fit_explanation: {
           type: ['string', 'null'],
           description:
-            '(recommendation_plan only) when nothing fits, what was missing; options is ' +
-            'then empty. Otherwise null.',
+            'When nothing fits, what was missing; options is then empty. Otherwise null.',
         },
         summary: {
           type: 'string',
           description: 'one short paragraph/sentence summarizing this event.',
         },
       },
-      required: ['type'],
+      required: [
+        'insights_event_id',
+        'searches',
+        'options',
+        'highlighted_product_id',
+        'highlight_reason',
+        'not_shown',
+        'assumptions_relied_on',
+        'no_fit_explanation',
+        'summary',
+      ],
     },
   },
   {
@@ -441,8 +462,6 @@ export interface RecommendationPlanEvent {
   summary: string
 }
 
-export type AuditEvent = HistoryInsightsEvent | RecommendationPlanEvent
-
 function requireStringArray(input: Record<string, unknown>, key: string): string[] {
   const value = input[key]
   if (!Array.isArray(value) || value.some((v) => typeof v !== 'string')) {
@@ -515,9 +534,9 @@ function requireEntries<T>(
   })
 }
 
-/** Validates a `record_audit_event` call shaped like `history_insights` -- see section 2.3 of
- * agent-system-prompt.md for the field-by-field meaning. Thrown errors surface to the model
- * as a tool error, same as every other validated tool input in this file. */
+/** Validates a `record_history_insights` call -- see section 2.3 of agent-system-prompt.md
+ * for the field-by-field meaning. Thrown errors surface to the model as a tool error, same
+ * as every other validated tool input in this file. */
 function parseHistoryInsights(input: Record<string, unknown>): HistoryInsightsEvent {
   return {
     type: 'history_insights',
@@ -545,8 +564,8 @@ function parseHistoryInsights(input: Record<string, unknown>): HistoryInsightsEv
   }
 }
 
-/** Validates a `record_audit_event` call shaped like `recommendation_plan` -- see section 2.3
- * of agent-system-prompt.md for the field-by-field meaning. */
+/** Validates a `record_recommendation_plan` call -- see section 2.3 of agent-system-prompt.md
+ * for the field-by-field meaning. */
 function parseRecommendationPlan(input: Record<string, unknown>): RecommendationPlanEvent {
   return {
     type: 'recommendation_plan',
@@ -572,11 +591,6 @@ function parseRecommendationPlan(input: Record<string, unknown>): Recommendation
     no_fit_explanation: requireNullableString(input, 'no_fit_explanation'),
     summary: requireString(input, 'summary'),
   }
-}
-
-function parseAuditEvent(input: Record<string, unknown>): AuditEvent {
-  const type = requireEnum(input, 'type', ['history_insights', 'recommendation_plan'] as const)
-  return type === 'history_insights' ? parseHistoryInsights(input) : parseRecommendationPlan(input)
 }
 
 async function readJsonOrThrow(res: Response, context: string): Promise<Record<string, unknown>> {
@@ -656,16 +670,22 @@ export function createAcpToolExecutor(
   /** Validates the call, then hands it to AuditEventStore (auditEvents.ts) to resolve its
    * run_id, assign a hash-chained seq/event_id, and persist `input` verbatim as the payload.
    * See AuditEventStore's own docstring for what "verbatim" and the hash chain mean. */
-  async function recordAuditEvent(input: Record<string, unknown>) {
-    const parsed = parseAuditEvent(input)
-    const link: AuditEventLink =
-      parsed.type === 'history_insights'
-        ? { type: 'history_insights', updatesEventId: parsed.updates_event_id }
-        : { type: 'recommendation_plan', insightsEventId: parsed.insights_event_id }
-    return auditEvents.record(input, link, {
-      sessionId: preferences.buyerId,
-      buyerId: preferences.buyerId,
-    })
+  async function recordHistoryInsights(input: Record<string, unknown>) {
+    const parsed = parseHistoryInsights(input)
+    return auditEvents.record(
+      input,
+      { type: 'history_insights', updatesEventId: parsed.updates_event_id },
+      { sessionId: preferences.buyerId, buyerId: preferences.buyerId },
+    )
+  }
+
+  async function recordRecommendationPlan(input: Record<string, unknown>) {
+    const parsed = parseRecommendationPlan(input)
+    return auditEvents.record(
+      input,
+      { type: 'recommendation_plan', insightsEventId: parsed.insights_event_id },
+      { sessionId: preferences.buyerId, buyerId: preferences.buyerId },
+    )
   }
 
   async function getCheckoutSession(input: Record<string, unknown>) {
@@ -814,8 +834,10 @@ export function createAcpToolExecutor(
         return searchProducts(input)
       case 'create_checkout_session':
         return createCheckoutSession(input)
-      case 'record_audit_event':
-        return recordAuditEvent(input)
+      case 'record_history_insights':
+        return recordHistoryInsights(input)
+      case 'record_recommendation_plan':
+        return recordRecommendationPlan(input)
       case 'get_checkout_session':
         return getCheckoutSession(input)
       case 'pay_for_checkout_session':

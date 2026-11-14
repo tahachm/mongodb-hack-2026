@@ -104,7 +104,6 @@ describe('harness-server chat API', () => {
       order: { id: 'order_1' },
     }
     const auditInput = {
-      type: 'recommendation_plan',
       insights_event_id: 'evt_1',
       searches: ['mouse'],
       options: [
@@ -140,7 +139,7 @@ describe('harness-server chat API', () => {
               {
                 type: 'tool_call',
                 id: 'call_audit',
-                name: 'record_audit_event',
+                name: 'record_recommendation_plan',
                 input: auditInput,
               },
             ],
@@ -161,7 +160,7 @@ describe('harness-server chat API', () => {
         }
         return textTurn('all set')
       }),
-      () => async (name) => (name === 'record_audit_event' ? auditOutput : checkoutOutput),
+      () => async (name) => (name === 'record_recommendation_plan' ? auditOutput : checkoutOutput),
       undefined,
       { recordPurchase, close: vi.fn() } as never,
     )
@@ -190,13 +189,13 @@ describe('harness-server chat API', () => {
     const auditCall = session.messages[1].content[0]
     expect(auditCall).toMatchObject({
       type: 'tool_call',
-      name: 'record_audit_event',
+      name: 'record_recommendation_plan',
       input: auditInput,
     })
     const auditResult = session.messages[2].content[0]
     expect(auditResult).toMatchObject({
       type: 'tool_result',
-      name: 'record_audit_event',
+      name: 'record_recommendation_plan',
       output: auditOutput,
     })
   })

@@ -2,18 +2,20 @@ import { createHash } from 'node:crypto'
 import { MongoClient, type Collection, type Document } from 'mongodb'
 import { randomUuidV7 } from './uuid.js'
 
-/** Where a `record_audit_event` call is scoped -- `sessionId` and `buyerId` are the same
- * value in this harness today (one chat session is one buyer), but stored as separate fields
- * since the audit log is conceptually a per-buyer ledger, not a per-session one. */
+/** Where a `record_history_insights`/`record_recommendation_plan` call is scoped --
+ * `sessionId` and `buyerId` are the same value in this harness today (one chat session is
+ * one buyer), but stored as separate fields since the audit log is conceptually a per-buyer
+ * ledger, not a per-session one. */
 export interface AuditEventContext {
   sessionId: string
   buyerId: string
 }
 
-/** The two event shapes `record_audit_event` accepts -- only the fields this store needs to
- * resolve run membership. See parseAuditEvent in tools/acp.ts for full validation; this store
- * trusts its caller already validated `event` and persists `rawInput` byte-for-byte as the
- * payload ("the model's input verbatim", per agent-system-prompt.md's header comment). */
+/** The two event shapes `record_history_insights`/`record_recommendation_plan` accept --
+ * only the fields this store needs to resolve run membership. See parseHistoryInsights/
+ * parseRecommendationPlan in tools/acp.ts for full validation; this store trusts its caller
+ * already validated `event` and persists `rawInput` byte-for-byte as the payload ("the
+ * model's input verbatim", per agent-system-prompt.md's header comment). */
 export type AuditEventLink =
   | { type: 'history_insights'; updatesEventId: string | null }
   | { type: 'recommendation_plan'; insightsEventId: string }
@@ -32,8 +34,8 @@ interface AuditEventDocument extends Document {
 }
 
 /**
- * Persists every `record_audit_event` call to MongoDB's `audit_events` collection -- the
- * `audit_events` collection from plan/PLAN.md section 5.2 referenced in
+ * Persists every `record_history_insights`/`record_recommendation_plan` call to MongoDB's
+ * `audit_events` collection -- the collection from plan/PLAN.md section 5.2 referenced in
  * agent-system-prompt.md's header comment (`history_insights` = `preferences_inferred`,
  * `recommendation_plan` = `recommendation_made` there). Unlike TranscriptStore, this is not
  * best-effort: it's the actual audit record the rest of the design depends on, so a write
@@ -51,7 +53,7 @@ interface AuditEventDocument extends Document {
  *   changes every hash after it, visible to anyone who re-walks the chain.
  *
  * Writes for the same buyer are serialized through an in-process queue (`enqueue`) so two
- * `record_audit_event` calls racing in the same assistant turn can't both read the same "last
+ * `record_history_insights`/`record_recommendation_plan` calls racing in the same assistant turn can't both read the same "last
  * event" and corrupt the chain -- there's no multi-document transaction doing this instead.
  */
 export class AuditEventStore {
@@ -69,7 +71,7 @@ export class AuditEventStore {
   private async getCollection(): Promise<Collection<AuditEventDocument>> {
     if (!this.uri) {
       throw new Error(
-        'record_audit_event is unavailable: MONGODB_URI is not configured on harness-server',
+        'record_history_insights/record_recommendation_plan is unavailable: MONGODB_URI is not configured on harness-server',
       )
     }
     if (this.collection) return this.collection
@@ -124,7 +126,7 @@ export class AuditEventStore {
         if (!referenced) {
           const field = link.type === 'history_insights' ? 'updates_event_id' : 'insights_event_id'
           throw new Error(
-            `record_audit_event: ${field} "${referencedId}" does not match any earlier event for this buyer`,
+            `record_history_insights/record_recommendation_plan: ${field} "${referencedId}" does not match any earlier event for this buyer`,
           )
         }
         runId = referenced.run_id
