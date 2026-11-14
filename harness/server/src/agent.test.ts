@@ -161,6 +161,6 @@ describe('runAgentTurn', () => {
     expect(last.content[0]).toMatchObject({ type: 'text' })
     // Bounded: an assistant turn + a tool-result turn per iteration, capped, plus the give-up
     // message -- this just needs to be small and constant, not grow without bound.
-    expect(seen.length).toBeLessThan(20)
+    expect(seen.length).toBeLessThan(45)
   })
 })

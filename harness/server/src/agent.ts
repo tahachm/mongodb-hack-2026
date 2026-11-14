@@ -2,7 +2,7 @@ import type { ContentPart, LlmClient, ToolDefinition, Turn } from './llm.js'
 
 export type ToolExecutor = (name: string, input: Record<string, unknown>) => Promise<unknown>
 
-const MAX_TOOL_ITERATIONS = 6
+const MAX_TOOL_ITERATIONS = 20
 
 function isToolCall(part: ContentPart): part is Extract<ContentPart, { type: 'tool_call' }> {
   return part.type === 'tool_call'
