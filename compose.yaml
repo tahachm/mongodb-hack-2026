@@ -34,7 +34,7 @@ services:
       PORT: "8083"
       MONGODB_URI: ${MONGODB_URI:?Set MONGODB_URI in .env -- requires MongoDB Atlas, local mongod doesn't support Vector Search}
       MONGODB_DB: ${MONGODB_DB:-agentic_commerce}
-      EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-768}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-voyage-4}
 
   merchant-mall-wart:
     <<: *merchant-service
@@ -75,11 +75,13 @@ services:
     environment:
       PORT: "4000"
       LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:?Set GEMINI_API_KEY in .env -- see .env.example}
+      # Only the active LLM_PROVIDER's key actually needs a real value -- app.ts itself
+      # throws a clear error if the chosen provider's key is missing, so this doesn't need
+      # a compose-level `:?` hard-fail (which would wrongly block anthropic-only setups).
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash-lite}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-haiku-5-5}
-      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-004}
       MERCHANT_URLS: >-
         mall-wart=http://merchant-mall-wart:8080,
         somefrills=http://merchant-somefrills:8080,
