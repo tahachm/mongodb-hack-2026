@@ -29,11 +29,33 @@ export type ContentPart =
        * in a later request (e.g. Gemini's thought signatures). Other providers ignore it. */
       providerMeta?: unknown
     }
-  | { type: 'tool_result'; id: string; name: string; output: unknown; isError?: boolean }
+  | {
+      type: 'tool_result'
+      id: string
+      name: string
+      output: unknown
+      isError?: boolean
+      /** How long the tool itself took to run, for inspection only. */
+      durationMs?: number
+    }
+
+/** Timing and token usage of the single model call that produced an assistant turn. For
+ * inspection only -- never sent back to the model (providers map content parts explicitly). */
+export interface TurnMetrics {
+  model: string
+  durationMs: number
+  inputTokens: number
+  outputTokens: number
+  /** Input tokens served from the provider's prompt cache, when it reports them. */
+  cachedInputTokens?: number
+  /** Why generation stopped, e.g. end_turn, tool_use, max_tokens. */
+  stopReason?: string
+}
 
 export interface Turn {
   role: 'user' | 'assistant'
   content: ContentPart[]
+  metrics?: TurnMetrics
 }
 
 export interface LlmRequest {

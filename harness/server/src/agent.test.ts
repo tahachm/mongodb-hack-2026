@@ -64,7 +64,15 @@ describe('runAgentTurn', () => {
     expect(seen[0]).toMatchObject({ role: 'assistant', content: [{ type: 'tool_call', id: 'c1' }] })
     expect(seen[1]).toEqual({
       role: 'user',
-      content: [{ type: 'tool_result', id: 'c1', name: 'search', output: { ok: true } }],
+      content: [
+        {
+          type: 'tool_result',
+          id: 'c1',
+          name: 'search',
+          output: { ok: true },
+          durationMs: expect.any(Number),
+        },
+      ],
     })
     expect(seen[2]).toMatchObject({
       role: 'assistant',
@@ -104,6 +112,7 @@ describe('runAgentTurn', () => {
           name: 'boom',
           output: 'merchant unreachable',
           isError: true,
+          durationMs: expect.any(Number),
         },
       ],
     })
@@ -135,8 +144,20 @@ describe('runAgentTurn', () => {
 
     const resultTurn = seen[1]
     expect(resultTurn.content).toEqual([
-      { type: 'tool_result', id: 'a', name: 'f', output: { doubled: 2 } },
-      { type: 'tool_result', id: 'b', name: 'f', output: { doubled: 4 } },
+      {
+        type: 'tool_result',
+        id: 'a',
+        name: 'f',
+        output: { doubled: 2 },
+        durationMs: expect.any(Number),
+      },
+      {
+        type: 'tool_result',
+        id: 'b',
+        name: 'f',
+        output: { doubled: 4 },
+        durationMs: expect.any(Number),
+      },
     ])
   })
 

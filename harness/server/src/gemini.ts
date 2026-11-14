@@ -62,6 +62,7 @@ export function createGeminiClient(apiKey: string, model: string): LlmClient {
         parts: toGeminiParts(turn.content),
       }))
 
+      const started = performance.now()
       const response = await ai.models.generateContent({
         model,
         contents,
@@ -84,7 +85,20 @@ export function createGeminiClient(apiKey: string, model: string): LlmClient {
       // Read parts straight off the candidate rather than the response.text/functionCalls
       // convenience getters -- those strip the per-part thoughtSignature we need to round-trip.
       const parts = response.candidates?.[0]?.content?.parts ?? []
-      return { role: 'assistant', content: fromGeminiParts(parts) }
+      const usage = response.usageMetadata
+      return {
+        role: 'assistant',
+        content: fromGeminiParts(parts),
+        metrics: {
+          model,
+          durationMs: Math.round(performance.now() - started),
+          inputTokens: usage?.promptTokenCount ?? 0,
+          // Gemini counts thinking separately from the visible output; both are generated.
+          outputTokens: (usage?.candidatesTokenCount ?? 0) + (usage?.thoughtsTokenCount ?? 0),
+          cachedInputTokens: usage?.cachedContentTokenCount,
+          stopReason: response.candidates?.[0]?.finishReason,
+        },
+      }
     },
   }
 }

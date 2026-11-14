@@ -39,9 +39,17 @@ export async function runAgentTurn(
 
     const resultParts: ContentPart[] = await Promise.all(
       toolCalls.map(async (call): Promise<ContentPart> => {
+        const started = performance.now()
+        const elapsed = () => Math.round(performance.now() - started)
         try {
           const output = await executeTool(call.name, call.input)
-          return { type: 'tool_result', id: call.id, name: call.name, output }
+          return {
+            type: 'tool_result',
+            id: call.id,
+            name: call.name,
+            output,
+            durationMs: elapsed(),
+          }
         } catch (err) {
           return {
             type: 'tool_result',
@@ -49,6 +57,7 @@ export async function runAgentTurn(
             name: call.name,
             output: err instanceof Error ? err.message : String(err),
             isError: true,
+            durationMs: elapsed(),
           }
         }
       }),

@@ -47,6 +47,7 @@ export function createClaudeClient(apiKey: string, model: string): LlmClient {
 
   return {
     async send({ system, messages, tools }: LlmRequest): Promise<Turn> {
+      const started = performance.now()
       const response = await anthropic.messages.create({
         model,
         max_tokens: MAX_TOKENS,
@@ -61,7 +62,21 @@ export function createClaudeClient(apiKey: string, model: string): LlmClient {
           input_schema: tool.inputSchema as Anthropic.Tool.InputSchema,
         })),
       })
-      return { role: 'assistant', content: fromAnthropicContent(response.content) }
+      return {
+        role: 'assistant',
+        content: fromAnthropicContent(response.content),
+        metrics: {
+          model,
+          durationMs: Math.round(performance.now() - started),
+          inputTokens:
+            response.usage.input_tokens +
+            (response.usage.cache_read_input_tokens ?? 0) +
+            (response.usage.cache_creation_input_tokens ?? 0),
+          outputTokens: response.usage.output_tokens,
+          cachedInputTokens: response.usage.cache_read_input_tokens ?? undefined,
+          stopReason: response.stop_reason ?? undefined,
+        },
+      }
     },
   }
 }
