@@ -6,3 +6,6 @@ __pycache__/
 
 amazon_data/.venv
 amazon_data/data
+
+.idea
+**/*.iml
