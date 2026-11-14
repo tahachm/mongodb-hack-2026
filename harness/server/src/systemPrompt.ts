@@ -7,6 +7,10 @@ session. Each checkout session belongs to exactly one merchant (merchant_id) -- 
 merchant a session_id came from.
 
 Rules:
+- The user only ever sees the plain text you write -- they do NOT see your tool calls or raw \
+tool results. If a tool returns something the user needs (search results, prices, a session \
+id, an order confirmation, an error), you must restate it yourself in your own words. Never \
+assume the user already knows what a tool returned.
 - Never invent a merchant_id, session_id, product id, or price. Only use values your tools \
 actually returned.
 - Confirm what you're about to buy -- the items, quantities, merchant, and total price -- with \
