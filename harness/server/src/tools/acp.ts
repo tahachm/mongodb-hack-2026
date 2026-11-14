@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { ToolExecutor } from '../agent.js'
 import type { ToolDefinition } from '../llm.js'
+import { randomUuidV7 } from '../uuid.js'
 
 export const acpTools: ToolDefinition[] = [
   {
@@ -38,6 +39,60 @@ export const acpTools: ToolDefinition[] = [
         },
       },
       required: ['merchant_id', 'items'],
+    },
+  },
+  {
+    name: 'report_product_decision',
+    description:
+      'Record why a specific catalog product was selected (or ruled out) for the buyer -- ' +
+      'call this every time you narrow down to, recommend, or pick a specific product from ' +
+      'search_products/recall_past_purchases results, not only right before checkout. ' +
+      'create_checkout_session refuses any item you have not reported a decision for first, ' +
+      "by design, so every product in a buyer's cart has a recorded reason for being there. " +
+      'List every fact that drove the decision, each with where it came from, and the ' +
+      'reasoning it implies, then the overall result.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        product: {
+          type: 'string',
+          description:
+            'The catalog item id this decision is about -- the same "id" from ' +
+            'search_products that you would pass to create_checkout_session.',
+        },
+        facts: {
+          type: 'array',
+          minItems: 1,
+          description: 'One entry per fact that fed into this decision -- at least one.',
+          items: {
+            type: 'object',
+            properties: {
+              sourceVectorSearch: {
+                type: 'string',
+                description:
+                  'Which call produced this fact, e.g. the exact search_products or ' +
+                  'recall_past_purchases query text that returned it.',
+              },
+              response: {
+                type: 'string',
+                description: 'The relevant raw result text that call returned.',
+              },
+              factImplication: {
+                type: 'string',
+                description: 'What this fact implies for this decision.',
+              },
+            },
+            required: ['sourceVectorSearch', 'response', 'factImplication'],
+          },
+        },
+        result: {
+          type: 'string',
+          description:
+            'The decision itself: why this product should or should not be selected, given ' +
+            'the facts above.',
+        },
+      },
+      required: ['product', 'facts', 'result'],
     },
   },
   {
@@ -164,6 +219,34 @@ function requireNonEmptyStringArray(input: Record<string, unknown>, key: string)
   return value as string[]
 }
 
+export interface DecisionFact {
+  sourceVectorSearch: string
+  response: string
+  factImplication: string
+}
+
+function requireFacts(input: Record<string, unknown>): DecisionFact[] {
+  const value = input.facts
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new ToolInputError('"facts" must be a non-empty array')
+  }
+  return value.map((entry, i) => {
+    if (typeof entry !== 'object' || entry === null) {
+      throw new ToolInputError(`facts[${i}] must be an object`)
+    }
+    const e = entry as Record<string, unknown>
+    const fact = {} as DecisionFact
+    for (const key of ['sourceVectorSearch', 'response', 'factImplication'] as const) {
+      const v = e[key]
+      if (typeof v !== 'string' || v === '') {
+        throw new ToolInputError(`facts[${i}].${key} must be a non-empty string`)
+      }
+      fact[key] = v
+    }
+    return fact
+  })
+}
+
 async function readJsonOrThrow(res: Response, context: string): Promise<Record<string, unknown>> {
   const body = await res.json().catch(() => ({}))
   if (!res.ok) {
@@ -201,6 +284,11 @@ export function createAcpToolExecutor(
   pspUrl: string,
   preferences: PreferencesContext,
 ): ToolExecutor {
+  // Catalog item ids this buyer has reported a report_product_decision for, this executor's
+  // whole lifetime -- one executor per chat session (see app.ts), so this tracks decisions
+  // across every message in the conversation, not just the current tool-call round.
+  const decidedProductIds = new Set<string>()
+
   function merchantBaseUrl(merchantId: string): string {
     const base = merchants.get(merchantId)
     if (!base) {
@@ -233,8 +321,36 @@ export function createAcpToolExecutor(
     if (!Array.isArray(input.items) || input.items.length === 0) {
       throw new ToolInputError('"items" must be a non-empty array')
     }
+    // report_product_decision must have already been called for every item -- a purchase
+    // can never go through for a product with no recorded reason it was selected, by design.
+    const missingDecisions = input.items.map((item) => {
+      const id =
+        typeof item === 'object' && item !== null ? (item as Record<string, unknown>).id : undefined
+      return typeof id === 'string' && decidedProductIds.has(id)
+        ? undefined
+        : (id ?? '(missing id)')
+    })
+    if (missingDecisions.some((id) => id !== undefined)) {
+      throw new ToolInputError(
+        'report_product_decision must be called for each item before checkout -- missing ' +
+          `for: ${missingDecisions.filter((id) => id !== undefined).join(', ')}`,
+      )
+    }
     const res = await postJson(`${base}/checkout_sessions`, { items: input.items })
     return readJsonOrThrow(res, 'create_checkout_session')
+  }
+
+  /** Records a product-selection decision: the facts considered, where each came from, and
+   * the resulting reasoning. decisionId is generated here, not trusted from the model, same
+   * spirit as pay_for_checkout_session never trusting an amount -- it's an audit id, not a
+   * claim the model gets to make about itself. Marks `product` as decided so
+   * create_checkout_session will accept it. */
+  async function reportProductDecision(input: Record<string, unknown>) {
+    const product = requireString(input, 'product')
+    const facts = requireFacts(input)
+    const result = requireString(input, 'result')
+    decidedProductIds.add(product)
+    return { decisionId: randomUuidV7(), product, facts, result }
   }
 
   async function getCheckoutSession(input: Record<string, unknown>) {
@@ -372,6 +488,8 @@ export function createAcpToolExecutor(
         return searchProducts(input)
       case 'create_checkout_session':
         return createCheckoutSession(input)
+      case 'report_product_decision':
+        return reportProductDecision(input)
       case 'get_checkout_session':
         return getCheckoutSession(input)
       case 'pay_for_checkout_session':

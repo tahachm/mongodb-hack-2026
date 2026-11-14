@@ -90,6 +90,8 @@ services:
         threadbarn=http://merchant-threadbarn:8080
       PSP_URL: http://psp:8081
       PREFERENCES_URL: http://preferences:8083
+      MONGODB_URI: ${MONGODB_URI:?Set MONGODB_URI in .env -- requires MongoDB Atlas, local mongod doesn't support Vector Search}
+      MONGODB_DB: ${MONGODB_DB:-agentic_commerce}
     depends_on:
       - psp
       - preferences

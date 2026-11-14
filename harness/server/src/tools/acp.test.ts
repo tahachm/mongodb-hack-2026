@@ -1,6 +1,7 @@
 import express, { type Express } from 'express'
 import type { Server } from 'node:http'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import type { ToolExecutor } from '../agent.js'
 import { createAcpToolExecutor, type PreferencesContext } from './acp.js'
 
 function listen(app: Express): Promise<{ server: Server; url: string }> {
@@ -143,6 +144,22 @@ describe('createAcpToolExecutor', () => {
     return { baseUrl: preferencesUrl, buyerId }
   }
 
+  /** Satisfies create_checkout_session's report_product_decision gate for `product` so tests
+   * about checkout/payment/cancel, not about the gate itself, don't have to restate it. */
+  async function reportDecision(execute: ToolExecutor, product = 'm-1') {
+    await execute('report_product_decision', {
+      product,
+      facts: [
+        {
+          sourceVectorSearch: 'search_products: "wireless mouse"',
+          response: 'Wireless Mouse, $29.99, in stock',
+          factImplication: 'Matches what the buyer asked for and is available.',
+        },
+      ],
+      result: `Selecting ${product}: it matches the request.`,
+    })
+  }
+
   beforeEach(async () => {
     seenAllowances = []
     seenPurchases = []
@@ -191,6 +208,7 @@ describe('createAcpToolExecutor', () => {
       pspUrl,
       preferencesContext(),
     )
+    await reportDecision(execute)
     const created = (await execute('create_checkout_session', {
       merchant_id: 'mall-wart',
       items: [{ id: 'm-1', quantity: 2 }],
@@ -210,6 +228,7 @@ describe('createAcpToolExecutor', () => {
       pspUrl,
       preferencesContext('buyer_42'),
     )
+    await reportDecision(execute)
     const created = (await execute('create_checkout_session', {
       merchant_id: 'mall-wart',
       items: [{ id: 'm-1', quantity: 1 }],
@@ -262,6 +281,7 @@ describe('createAcpToolExecutor', () => {
       pspUrl,
       preferencesContext(),
     )
+    await reportDecision(execute)
     const created = (await execute('create_checkout_session', {
       merchant_id: 'mall-wart',
       items: [{ id: 'm-1', quantity: 1 }],
@@ -283,6 +303,7 @@ describe('createAcpToolExecutor', () => {
       pspUrl,
       preferencesContext(),
     )
+    await reportDecision(execute)
     const created = (await execute('create_checkout_session', {
       merchant_id: 'mall-wart',
       items: [{ id: 'm-1', quantity: 1 }],
@@ -312,6 +333,7 @@ describe('createAcpToolExecutor', () => {
       pspUrl,
       preferencesContext(),
     )
+    await reportDecision(execute)
     const created = (await execute('create_checkout_session', {
       merchant_id: 'mall-wart',
       items: [{ id: 'm-1', quantity: 1 }],
@@ -341,6 +363,7 @@ describe('createAcpToolExecutor', () => {
       pspUrl,
       preferencesContext(),
     )
+    await reportDecision(execute)
     const created = (await execute('create_checkout_session', {
       merchant_id: 'mall-wart',
       items: [{ id: 'm-1', quantity: 1 }],
@@ -352,6 +375,81 @@ describe('createAcpToolExecutor', () => {
       reason: 'changed my mind',
     })) as { status: string }
     expect(canceled.status).toBe('canceled')
+  })
+
+  it('rejects create_checkout_session for an item with no reported decision', async () => {
+    const execute = createAcpToolExecutor(
+      new Map([['mall-wart', merchantUrl]]),
+      pspUrl,
+      preferencesContext(),
+    )
+    await expect(
+      execute('create_checkout_session', {
+        merchant_id: 'mall-wart',
+        items: [{ id: 'm-1', quantity: 1 }],
+      }),
+    ).rejects.toThrow(/report_product_decision must be called.*missing for: m-1/)
+  })
+
+  it('accepts create_checkout_session once a decision was reported for every item, in an earlier call', async () => {
+    const execute = createAcpToolExecutor(
+      new Map([['mall-wart', merchantUrl]]),
+      pspUrl,
+      preferencesContext(),
+    )
+    // Simulates the decision being reported in an earlier message of the same conversation --
+    // the executor is reused for the whole session (see app.ts), so this must still count.
+    await reportDecision(execute)
+    const created = (await execute('create_checkout_session', {
+      merchant_id: 'mall-wart',
+      items: [{ id: 'm-1', quantity: 1 }],
+    })) as { status: string }
+    expect(created.status).toBe('ready_for_payment')
+  })
+
+  it('records a product decision with a server-generated decisionId, echoing the input back', async () => {
+    const execute = createAcpToolExecutor(
+      new Map([['mall-wart', merchantUrl]]),
+      pspUrl,
+      preferencesContext(),
+    )
+    const facts = [
+      {
+        sourceVectorSearch: 'recall_past_purchases: "mouse"',
+        response: 'Bought a wired mouse last year, noted "prefers wireless next time"',
+        factImplication: 'Buyer wants wireless this time.',
+      },
+    ]
+    const decision = (await execute('report_product_decision', {
+      product: 'm-1',
+      facts,
+      result: 'm-1 is wireless and matches the stated preference.',
+    })) as { decisionId: string; product: string; facts: unknown[]; result: string }
+
+    expect(decision.decisionId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    )
+    expect(decision.product).toBe('m-1')
+    expect(decision.facts).toEqual(facts)
+    expect(decision.result).toBe('m-1 is wireless and matches the stated preference.')
+  })
+
+  it('rejects report_product_decision without any facts', async () => {
+    const execute = createAcpToolExecutor(new Map(), pspUrl, preferencesContext())
+    await expect(
+      execute('report_product_decision', { product: 'm-1', facts: [], result: 'because' }),
+    ).rejects.toThrow(/"facts" must be a non-empty array/)
+  })
+
+  it('rejects report_product_decision when a fact is missing a required field', async () => {
+    const execute = createAcpToolExecutor(new Map(), pspUrl, preferencesContext())
+    await expect(
+      execute('report_product_decision', {
+        product: 'm-1',
+        facts: [{ sourceVectorSearch: 'search_products: "mouse"', response: 'a mouse' }],
+        result: 'because',
+      }),
+    ).rejects.toThrow(/facts\[0\]\.factImplication must be a non-empty string/)
   })
 
   it('rejects search_products when no merchants are configured', async () => {

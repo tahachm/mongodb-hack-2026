@@ -1,5 +1,5 @@
 import request from 'supertest'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createApp } from './app.js'
 import type { LlmClient, Turn } from './llm.js'
 
@@ -93,6 +93,100 @@ describe('harness-server chat API', () => {
     expect(replied.body.messages[3]).toMatchObject({
       role: 'assistant',
       content: [{ type: 'text', text: 'done searching' }],
+    })
+  })
+
+  it('dumps the full transcript (incl. decision + payment tool calls/results) to Mongo once a purchase completes', async () => {
+    const checkoutOutput = {
+      id: 'cs_1',
+      merchant_id: 'mall-wart',
+      status: 'completed',
+      order: { id: 'order_1' },
+      preference_tracking: { recorded: true },
+    }
+    const decisionOutput = {
+      decisionId: 'dec_1',
+      product: 'm-1',
+      facts: [
+        {
+          sourceVectorSearch: 'search_products: "mouse"',
+          response: 'a mouse',
+          factImplication: 'matches',
+        },
+      ],
+      result: 'pick m-1',
+    }
+    const recordPurchase = vi.fn().mockResolvedValue(undefined)
+    const app = createApp(
+      fakeLlm((history) => {
+        const toolResultTurns = history.filter((turn) =>
+          turn.content.some((part) => part.type === 'tool_result'),
+        ).length
+        if (toolResultTurns === 0) {
+          return {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_call',
+                id: 'call_decide',
+                name: 'report_product_decision',
+                input: {
+                  product: 'm-1',
+                  facts: decisionOutput.facts,
+                  result: decisionOutput.result,
+                },
+              },
+            ],
+          }
+        }
+        if (toolResultTurns === 1) {
+          return {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_call',
+                id: 'call_pay',
+                name: 'pay_for_checkout_session',
+                input: { merchant_id: 'mall-wart', session_id: 'cs_1' },
+              },
+            ],
+          }
+        }
+        return textTurn('all set')
+      }),
+      () => async (name) => (name === 'report_product_decision' ? decisionOutput : checkoutOutput),
+      undefined,
+      { recordPurchase, close: vi.fn() } as never,
+    )
+
+    const created = await request(app).post('/sessions').expect(201)
+    const replied = await request(app)
+      .post(`/sessions/${created.body.id}/messages`)
+      .send({ content: 'buy it' })
+      .expect(200)
+
+    expect(recordPurchase).toHaveBeenCalledTimes(1)
+    const [session, event] = recordPurchase.mock.calls[0]
+    expect(session.id).toBe(created.body.id)
+    expect(event).toEqual({
+      merchantId: 'mall-wart',
+      checkoutSessionId: 'cs_1',
+      orderId: 'order_1',
+    })
+    // The dumped transcript is exactly what the buyer-facing response sees: every tool_call
+    // request and tool_result response, not just the final text -- including the decision
+    // event's own request/response, not only the payment's.
+    expect(session.messages).toEqual(replied.body.messages)
+    expect(session.messages.map((m: { content: { type: string }[] }) => m.content[0].type)).toEqual(
+      ['text', 'tool_call', 'tool_result', 'tool_call', 'tool_result', 'text'],
+    )
+    const decisionCall = session.messages[1].content[0]
+    expect(decisionCall).toMatchObject({ type: 'tool_call', name: 'report_product_decision' })
+    const decisionResult = session.messages[2].content[0]
+    expect(decisionResult).toMatchObject({
+      type: 'tool_result',
+      name: 'report_product_decision',
+      output: decisionOutput,
     })
   })
 
