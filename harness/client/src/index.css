@@ -1,10 +1,43 @@
 :root {
-  color-scheme: light;
+  color-scheme: dark;
   font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+
+  /* Dark + lime, borrowing MongoDB's dark-docs/"spring green" palette family. */
+  --bg: #001e2b;
+  --bg-raised: #06303f;
+  --surface: #0a2231;
+  --surface-2: #0f2c3d;
+  --border: rgba(0, 237, 100, 0.16);
+  --text: #e8f6f1;
+  --text-muted: #8aa6a3;
+  --accent: #00ed64;
+  --accent-strong: #00c454;
+  --accent-dim: rgba(0, 237, 100, 0.18);
+  --danger: #ff6b6b;
 }
 
 body {
   margin: 0;
-  background: #fff;
-  color: #111;
+  background: var(--bg);
+  color: var(--text);
+}
+
+::selection {
+  background: var(--accent-dim);
+  color: var(--text);
+}
+
+/* Thin, lime-accented scrollbars -- matches the rest of the techy/data feel. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--accent-dim) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--accent-dim);
+  border-radius: 8px;
 }

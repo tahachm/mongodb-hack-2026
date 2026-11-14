@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import type { StoredMessage } from './api'
+import { MarkdownText } from './MarkdownText'
 
 export function ChatWindow({ messages }: { messages: StoredMessage[] }) {
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -19,9 +20,7 @@ export function ChatWindow({ messages }: { messages: StoredMessage[] }) {
         return (
           <div key={i} className={`message message-${message.role}`}>
             {textParts.map((part, j) => (
-              <p key={j} className="message-text">
-                {part.text}
-              </p>
+              <MarkdownText key={j} text={part.text} />
             ))}
           </div>
         )

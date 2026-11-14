@@ -1,7 +1,10 @@
 import { useEffect } from 'react'
 import './App.css'
+import { Background } from './Background'
 import { ChatWindow } from './ChatWindow'
 import { Composer } from './Composer'
+import { Logo } from './Logo'
+import { TypingIndicator } from './TypingIndicator'
 import { useChatStore } from './store'
 
 function App() {
@@ -19,23 +22,37 @@ function App() {
   const busy = status === 'starting' || status === 'sending'
 
   return (
-    <main className="app">
-      <header className="app-header">
-        <h1>AI Harness</h1>
-        <button type="button" onClick={() => start()} disabled={busy}>
-          New session
-        </button>
-      </header>
+    <>
+      <Background />
+      <main className="app">
+        <header className="app-header">
+          <div className="app-brand">
+            <Logo />
+            <div>
+              <h1>AI Harness</h1>
+              <p className="app-tagline">Agentic shopping, demoed live</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="new-session-button"
+            onClick={() => start()}
+            disabled={busy}
+          >
+            New session
+          </button>
+        </header>
 
-      {!session && status === 'starting' && <p className="status-line">Starting a session…</p>}
+        {!session && status === 'starting' && <p className="status-line">Starting a session…</p>}
 
-      {session && <ChatWindow messages={session.messages} />}
+        {session && <ChatWindow messages={session.messages} />}
 
-      {status === 'sending' && <p className="status-line">Agent is working…</p>}
-      {status === 'error' && error && <p className="status-line status-error">{error}</p>}
+        {status === 'sending' && <TypingIndicator />}
+        {status === 'error' && error && <p className="status-line status-error">{error}</p>}
 
-      <Composer disabled={busy || !session} onSend={send} />
-    </main>
+        <Composer disabled={busy || !session} onSend={send} />
+      </main>
+    </>
   )
 }
 

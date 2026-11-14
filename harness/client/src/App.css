@@ -1,10 +1,58 @@
+/* ---------- decorative backdrop ---------- */
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 1px 1px, rgba(0, 237, 100, 0.09) 1px, transparent 0) 0 0 / 28px 28px,
+    var(--bg);
+}
+
+.backdrop-glow {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(90px);
+}
+
+.backdrop-glow-a {
+  width: 480px;
+  height: 480px;
+  top: -140px;
+  right: -120px;
+  background: var(--accent);
+  opacity: 0.16;
+}
+
+.backdrop-glow-b {
+  width: 420px;
+  height: 420px;
+  bottom: -160px;
+  left: -140px;
+  background: #0aa36f;
+  opacity: 0.14;
+}
+
+.backdrop-curves {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* ---------- layout ---------- */
+
 .app {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
   height: 100vh;
-  max-width: 720px;
+  max-width: 760px;
   margin: 0 auto;
-  padding: 0 1rem;
+  padding: 0 1.25rem;
   box-sizing: border-box;
 }
 
@@ -12,99 +60,257 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 1rem 0;
-  border-bottom: 1px solid #e5e4e7;
+  padding: 1.25rem 0;
+  border-bottom: 1px solid var(--border);
 }
 
-.app-header h1 {
-  font-size: 1.25rem;
+.app-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+.app-brand h1 {
+  font-size: 1.15rem;
   margin: 0;
+  letter-spacing: 0.01em;
 }
 
-.app-header button {
+.app-tagline {
+  margin: 0.15rem 0 0;
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-family: ui-monospace, Consolas, monospace;
+}
+
+.logo-mark {
+  flex-shrink: 0;
+  filter: drop-shadow(0 0 6px var(--accent-dim));
+}
+
+.new-session-button {
   font: inherit;
-  padding: 0.4rem 0.8rem;
-  border-radius: 6px;
-  border: 1px solid #c9c7cf;
-  background: #fff;
+  font-size: 0.85rem;
+  padding: 0.45rem 0.9rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
   cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
 }
 
-.app-header button:disabled {
-  opacity: 0.5;
+.new-session-button:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--surface-2);
+}
+
+.new-session-button:disabled {
+  opacity: 0.45;
   cursor: default;
 }
+
+/* ---------- chat ---------- */
 
 .chat-window {
   flex: 1;
   overflow-y: auto;
-  padding: 1rem 0;
+  padding: 1.25rem 0;
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 0.85rem;
 }
 
 .message {
-  max-width: 85%;
-  padding: 0.6rem 0.9rem;
-  border-radius: 10px;
-  line-height: 1.4;
+  max-width: 80%;
+  padding: 0.7rem 1rem;
+  border-radius: 16px;
+  line-height: 1.5;
+  font-size: 0.92rem;
+  animation: message-in 0.25s ease;
 }
 
-.message-text {
-  margin: 0;
-  white-space: pre-wrap;
+@keyframes message-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .message-user {
   align-self: flex-end;
-  background: #2563eb;
-  color: #fff;
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%);
+  color: #00170d;
+  border-bottom-right-radius: 4px;
+  box-shadow: 0 2px 16px rgba(0, 237, 100, 0.25);
 }
 
 .message-assistant {
   align-self: flex-start;
-  background: #f1f0f4;
-  color: #111;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-bottom-left-radius: 4px;
 }
+
+/* markdown content inside a message bubble */
+
+.md-p {
+  margin: 0 0 0.5rem;
+}
+
+.md-p:last-child {
+  margin-bottom: 0;
+}
+
+.md-list {
+  margin: 0.25rem 0 0.5rem;
+  padding-left: 1.2rem;
+}
+
+.md-li {
+  margin-bottom: 0.2rem;
+}
+
+.md-strong {
+  font-weight: 700;
+}
+
+.message-assistant .md-strong {
+  color: var(--accent);
+}
+
+.md-link {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* ---------- status + typing ---------- */
 
 .status-line {
   text-align: center;
-  font-size: 0.85rem;
-  color: #6b6375;
+  font-size: 0.8rem;
+  color: var(--text-muted);
   margin: 0.25rem 0;
+  font-family: ui-monospace, Consolas, monospace;
 }
 
 .status-error {
-  color: #dc2626;
+  color: var(--danger);
 }
+
+.typing-indicator {
+  display: flex;
+  gap: 5px;
+  align-self: flex-start;
+  padding: 0.6rem 0.2rem;
+  margin-left: 0.2rem;
+}
+
+.typing-indicator span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0.5;
+  animation: typing-pulse 1.1s infinite ease-in-out;
+}
+
+.typing-indicator span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.typing-indicator span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes typing-pulse {
+  0%,
+  80%,
+  100% {
+    transform: scale(0.7);
+    opacity: 0.3;
+  }
+  40% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* ---------- composer ---------- */
 
 .composer {
   display: flex;
-  gap: 0.5rem;
-  padding: 1rem 0;
-  border-top: 1px solid #e5e4e7;
+  gap: 0.6rem;
+  padding: 1.1rem 0 1.4rem;
+  border-top: 1px solid var(--border);
 }
 
 .composer input {
   flex: 1;
   font: inherit;
-  padding: 0.6rem 0.8rem;
-  border-radius: 8px;
-  border: 1px solid #c9c7cf;
+  font-size: 0.92rem;
+  padding: 0.75rem 1.1rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  outline: none;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
 }
 
-.composer button {
+.composer input::placeholder {
+  color: var(--text-muted);
+}
+
+.composer input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-dim);
+}
+
+.composer input:disabled {
+  opacity: 0.6;
+}
+
+.send-button {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
   font: inherit;
-  padding: 0.6rem 1.1rem;
-  border-radius: 8px;
+  font-size: 0.92rem;
+  font-weight: 600;
+  padding: 0.75rem 1.3rem;
+  border-radius: 999px;
   border: none;
-  background: #2563eb;
-  color: #fff;
+  background: var(--accent);
+  color: #00170d;
   cursor: pointer;
+  box-shadow: 0 2px 18px rgba(0, 237, 100, 0.35);
+  transition:
+    transform 0.12s,
+    box-shadow 0.12s,
+    opacity 0.12s;
 }
 
-.composer button:disabled {
-  opacity: 0.5;
+.send-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 22px rgba(0, 237, 100, 0.45);
+}
+
+.send-button:disabled {
+  opacity: 0.4;
   cursor: default;
+  box-shadow: none;
+  transform: none;
 }
