@@ -1,7 +1,36 @@
 import express, { type Express } from 'express'
 import type { Server } from 'node:http'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { ToolExecutor } from '../agent.js'
+import type { AuditEventStore } from '../auditEvents.js'
 import { createAcpToolExecutor, type PreferencesContext } from './acp.js'
+
+/** Most tests here don't care about audit events -- this fake just needs to satisfy
+ * AuditEventStore's shape so createAcpToolExecutor can be constructed. The real run_id/seq/
+ * hash-chain resolution lives in auditEvents.ts and needs a live MongoDB to exercise, which
+ * this test suite deliberately avoids (same convention as preferences/ApplicationTest.kt --
+ * see record_audit_event's own dedicated tests below for what this file does verify: that
+ * acp.ts validates input and delegates to the store correctly). */
+function fakeAuditEventStore(): AuditEventStore {
+  let seq = 0
+  return {
+    record: vi.fn(async () => {
+      seq += 1
+      return { event_id: `evt_fake_${seq}`, seq }
+    }),
+    close: vi.fn(),
+  } as unknown as AuditEventStore
+}
+
+/** createAcpToolExecutor with a throwaway fake AuditEventStore, for every test that isn't
+ * specifically about record_audit_event's acp.ts-side wiring. */
+function createExecutor(
+  merchants: Map<string, string>,
+  pspUrl: string,
+  preferences: PreferencesContext,
+): ToolExecutor {
+  return createAcpToolExecutor(merchants, pspUrl, preferences, fakeAuditEventStore())
+}
 
 function listen(app: Express): Promise<{ server: Server; url: string }> {
   const { promise, resolve } = Promise.withResolvers<{ server: Server; url: string }>()
@@ -161,7 +190,7 @@ describe('createAcpToolExecutor', () => {
   })
 
   it('searches only the configured merchants and tags results by merchant_id', async () => {
-    const execute = createAcpToolExecutor(
+    const execute = createExecutor(
       new Map([['mall-wart', merchantUrl]]),
       pspUrl,
       preferencesContext(),
@@ -175,7 +204,7 @@ describe('createAcpToolExecutor', () => {
   })
 
   it('rejects an unknown merchant_id with the list of configured ones', async () => {
-    const execute = createAcpToolExecutor(
+    const execute = createExecutor(
       new Map([['mall-wart', merchantUrl]]),
       pspUrl,
       preferencesContext(),
@@ -186,7 +215,7 @@ describe('createAcpToolExecutor', () => {
   })
 
   it('creates and then fetches a checkout session', async () => {
-    const execute = createAcpToolExecutor(
+    const execute = createExecutor(
       new Map([['mall-wart', merchantUrl]]),
       pspUrl,
       preferencesContext(),
@@ -205,7 +234,7 @@ describe('createAcpToolExecutor', () => {
   })
 
   it('pays using the session total read from the merchant, not an amount from input', async () => {
-    const execute = createAcpToolExecutor(
+    const execute = createExecutor(
       new Map([['mall-wart', merchantUrl]]),
       pspUrl,
       preferencesContext('buyer_42'),
@@ -236,7 +265,7 @@ describe('createAcpToolExecutor', () => {
   })
 
   it('cancels a checkout session', async () => {
-    const execute = createAcpToolExecutor(
+    const execute = createExecutor(
       new Map([['mall-wart', merchantUrl]]),
       pspUrl,
       preferencesContext(),
@@ -254,9 +283,17 @@ describe('createAcpToolExecutor', () => {
     expect(canceled.status).toBe('canceled')
   })
 
-  it('records a history_insights audit event, returning a generated event_id and seq', async () => {
-    const execute = createAcpToolExecutor(new Map(), pspUrl, preferencesContext())
-    const result = (await execute('record_audit_event', {
+  it('validates a history_insights call and delegates it to the audit event store', async () => {
+    const record = vi.fn().mockResolvedValue({ event_id: 'evt_1', seq: 1 })
+    const auditEvents = { record, close: vi.fn() } as unknown as AuditEventStore
+    const execute = createAcpToolExecutor(
+      new Map(),
+      pspUrl,
+      preferencesContext('buyer_42'),
+      auditEvents,
+    )
+
+    const input = {
       type: 'history_insights',
       updates_event_id: null,
       request: 'A comfortable hoodie. No size, colour, budget or occasion given.',
@@ -280,28 +317,26 @@ describe('createAcpToolExecutor', () => {
       assumptions: ['No budget limit; show a spread of prices.'],
       follow_up_question: null,
       summary: 'They want a comfortable hoodie; history shows size M and dark colours.',
-    })) as { event_id: string; seq: number }
+    }
+    const result = await execute('record_audit_event', input)
 
-    expect(result.event_id).toMatch(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    // The store's {event_id, seq} is returned as is -- acp.ts doesn't generate its own.
+    expect(result).toEqual({ event_id: 'evt_1', seq: 1 })
+    // `input` is passed through verbatim as the payload, alongside a link derived from it
+    // for the store to resolve run_id with, and this executor's buyer/session scope.
+    expect(record).toHaveBeenCalledWith(
+      input,
+      { type: 'history_insights', updatesEventId: null },
+      { sessionId: 'buyer_42', buyerId: 'buyer_42' },
     )
-    expect(result.seq).toBe(1)
   })
 
-  it('records a recommendation_plan audit event, and seq increases across calls on the same executor', async () => {
-    const execute = createAcpToolExecutor(new Map(), pspUrl, preferencesContext())
+  it('links a recommendation_plan call to its insights_event_id', async () => {
+    const record = vi.fn().mockResolvedValue({ event_id: 'evt_2', seq: 2 })
+    const auditEvents = { record, close: vi.fn() } as unknown as AuditEventStore
+    const execute = createAcpToolExecutor(new Map(), pspUrl, preferencesContext(), auditEvents)
+
     await execute('record_audit_event', {
-      type: 'history_insights',
-      updates_event_id: null,
-      request: 'req',
-      insights: [],
-      ignored_records: [],
-      gaps: [],
-      assumptions: [],
-      follow_up_question: null,
-      summary: 'summary',
-    })
-    const result = (await execute('record_audit_event', {
       type: 'recommendation_plan',
       insights_event_id: 'evt_6d2e91a4c07b',
       searches: ['hoodie', 'hooded'],
@@ -323,20 +358,24 @@ describe('createAcpToolExecutor', () => {
       assumptions_relied_on: ['No budget limit; show a spread of prices.'],
       no_fit_explanation: null,
       summary: 'One hooded sweatshirt in size M, led by the cheapest black one.',
-    })) as { event_id: string; seq: number }
+    })
 
-    expect(result.seq).toBe(2)
+    expect(record).toHaveBeenCalledWith(
+      expect.anything(),
+      { type: 'recommendation_plan', insightsEventId: 'evt_6d2e91a4c07b' },
+      expect.anything(),
+    )
   })
 
   it('rejects record_audit_event with an unknown type', async () => {
-    const execute = createAcpToolExecutor(new Map(), pspUrl, preferencesContext())
+    const execute = createExecutor(new Map(), pspUrl, preferencesContext())
     await expect(execute('record_audit_event', { type: 'something_else' })).rejects.toThrow(
       /"type" must be one of: history_insights, recommendation_plan/,
     )
   })
 
   it('rejects history_insights with a bad confidence value, naming which insight', async () => {
-    const execute = createAcpToolExecutor(new Map(), pspUrl, preferencesContext())
+    const execute = createExecutor(new Map(), pspUrl, preferencesContext())
     await expect(
       execute('record_audit_event', {
         type: 'history_insights',
@@ -353,7 +392,7 @@ describe('createAcpToolExecutor', () => {
   })
 
   it('rejects recommendation_plan missing a required option field', async () => {
-    const execute = createAcpToolExecutor(new Map(), pspUrl, preferencesContext())
+    const execute = createExecutor(new Map(), pspUrl, preferencesContext())
     await expect(
       execute('record_audit_event', {
         type: 'recommendation_plan',
@@ -371,14 +410,14 @@ describe('createAcpToolExecutor', () => {
   })
 
   it('rejects search_products when no merchants are configured', async () => {
-    const execute = createAcpToolExecutor(new Map(), pspUrl, preferencesContext())
+    const execute = createExecutor(new Map(), pspUrl, preferencesContext())
     await expect(execute('search_products', { query: 'anything' })).rejects.toThrow(
       /no merchants configured/,
     )
   })
 
   it('searches preferences with structured queries, scoping to buyer_id', async () => {
-    const execute = createAcpToolExecutor(
+    const execute = createExecutor(
       new Map([['mall-wart', merchantUrl]]),
       pspUrl,
       preferencesContext('buyer_42'),
@@ -416,7 +455,7 @@ describe('createAcpToolExecutor', () => {
   })
 
   it('passes merchant_id through to search_preferences when given', async () => {
-    const execute = createAcpToolExecutor(
+    const execute = createExecutor(
       new Map([['mall-wart', merchantUrl]]),
       pspUrl,
       preferencesContext(),
@@ -429,14 +468,14 @@ describe('createAcpToolExecutor', () => {
   })
 
   it('rejects search_preferences without any queries', async () => {
-    const execute = createAcpToolExecutor(new Map(), pspUrl, preferencesContext())
+    const execute = createExecutor(new Map(), pspUrl, preferencesContext())
     await expect(execute('search_preferences', { queries: [] })).rejects.toThrow(
       /"queries" must be a non-empty array/,
     )
   })
 
   it('saves a purchased preference record, building notes and one vector per narrative field', async () => {
-    const execute = createAcpToolExecutor(new Map(), pspUrl, preferencesContext('buyer_42'))
+    const execute = createExecutor(new Map(), pspUrl, preferencesContext('buyer_42'))
     const product = { id: 'clothing-03491', name: 'Thread Barn Hooded Sweatshirt, M, Heather Gray' }
 
     const result = (await execute('save_preference_record', {
@@ -481,7 +520,7 @@ describe('createAcpToolExecutor', () => {
   })
 
   it('saves a stated_preference record with an empty comparison and null product as {}', async () => {
-    const execute = createAcpToolExecutor(new Map(), pspUrl, preferencesContext())
+    const execute = createExecutor(new Map(), pspUrl, preferencesContext())
     await execute('save_preference_record', {
       kind: 'stated_preference',
       request: "The user said: 'I've gone vegetarian.'",
@@ -505,7 +544,7 @@ describe('createAcpToolExecutor', () => {
   })
 
   it('rejects save_preference_record with an unknown kind', async () => {
-    const execute = createAcpToolExecutor(new Map(), pspUrl, preferencesContext())
+    const execute = createExecutor(new Map(), pspUrl, preferencesContext())
     await expect(
       execute('save_preference_record', {
         kind: 'bought_it',
@@ -522,7 +561,7 @@ describe('createAcpToolExecutor', () => {
   })
 
   it('rejects save_preference_record missing a required field', async () => {
-    const execute = createAcpToolExecutor(new Map(), pspUrl, preferencesContext())
+    const execute = createExecutor(new Map(), pspUrl, preferencesContext())
     await expect(
       execute('save_preference_record', {
         kind: 'no_decision',

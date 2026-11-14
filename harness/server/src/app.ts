@@ -1,6 +1,7 @@
 import cors from 'cors'
 import express from 'express'
 import { runAgentTurn, type ToolExecutor } from './agent.js'
+import { AuditEventStore } from './auditEvents.js'
 import { config } from './config.js'
 import type { ContentPart, LlmClient, Turn } from './llm.js'
 import { SessionStore } from './sessions.js'
@@ -8,17 +9,32 @@ import { SYSTEM_PROMPT } from './systemPrompt.js'
 import { acpTools, createAcpToolExecutor } from './tools/acp.js'
 import { TranscriptStore, type PurchaseTranscriptEvent } from './transcripts.js'
 
+// One AuditEventStore (and so one lazily-opened Mongo connection) for the whole process --
+// every session's ToolExecutor shares it, since the store is already buyer-scoped internally
+// (see auditEvents.ts) and its hash chain needs one connection serializing writes per buyer,
+// not one per session.
+let sharedAuditEvents: AuditEventStore | undefined
+function defaultAuditEventStore(): AuditEventStore {
+  sharedAuditEvents ??= new AuditEventStore(
+    config.mongoUri,
+    config.mongoDb,
+    config.auditEventsCollection,
+  )
+  return sharedAuditEvents
+}
+
 /** One executor per chat session, not a shared singleton -- `buyer_id` on every recorded
- * purchase is the harness chat session id, so preferences recorded in one conversation stay
- * scoped to it. Also where record_audit_event's per-session `seq` counter lives (see acp.ts)
- * -- caching one instance per session for its whole lifetime, not recreating it per message
- * (see toolExecutors below), is what keeps that sequence number increasing across the whole
- * conversation instead of resetting on every message. */
+ * purchase is the harness chat session id, so preferences and audit events recorded in one
+ * conversation stay scoped to it. Cached per session (see toolExecutors below) rather than
+ * rebuilt on every message, just to avoid the churn -- correctness no longer depends on it
+ * the way it would if the audit log's sequencing lived in this closure instead of Mongo. */
 function defaultCreateToolExecutor(buyerId: string): ToolExecutor {
-  return createAcpToolExecutor(config.merchants, config.pspUrl, {
-    baseUrl: config.preferencesUrl,
-    buyerId,
-  })
+  return createAcpToolExecutor(
+    config.merchants,
+    config.pspUrl,
+    { baseUrl: config.preferencesUrl, buyerId },
+    defaultAuditEventStore(),
+  )
 }
 
 function defaultTranscriptStore(): TranscriptStore {

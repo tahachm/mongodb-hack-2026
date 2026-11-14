@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { ToolExecutor } from '../agent.js'
+import { type AuditEventLink, AuditEventStore } from '../auditEvents.js'
 import type { ToolDefinition } from '../llm.js'
-import { randomUuidV7 } from '../uuid.js'
 
 export const acpTools: ToolDefinition[] = [
   {
@@ -605,22 +605,18 @@ export interface PreferencesContext {
 }
 
 /**
- * Builds a ToolExecutor wired to a specific set of merchant base URLs, a PSP base URL, and a
- * preferences store context, instead of reading a global config singleton -- so tests can
- * point it at throwaway fake servers the same way the merchant/psp projects' own tests do,
- * and app.ts is the only place that wires the real config in (one executor per chat session,
- * since `preferences.buyerId` is per-session).
+ * Builds a ToolExecutor wired to a specific set of merchant base URLs, a PSP base URL, a
+ * preferences store context, and an audit event store, instead of reading a global config
+ * singleton -- so tests can point it at throwaway fake servers the same way the merchant/psp
+ * projects' own tests do, and app.ts is the only place that wires the real config in (one
+ * executor per chat session, since `preferences.buyerId` is per-session).
  */
 export function createAcpToolExecutor(
   merchants: Map<string, string>,
   pspUrl: string,
   preferences: PreferencesContext,
+  auditEvents: AuditEventStore,
 ): ToolExecutor {
-  // Monotonic per-session sequence number for audit events -- one executor per chat session
-  // (see app.ts), so this counts every record_audit_event call across the whole conversation,
-  // not just the current tool-call round.
-  let auditSeq = 0
-
   function merchantBaseUrl(merchantId: string): string {
     const base = merchants.get(merchantId)
     if (!base) {
@@ -657,16 +653,19 @@ export function createAcpToolExecutor(
     return readJsonOrThrow(res, 'create_checkout_session')
   }
 
-  /** Validates and appends one entry to the audit log. event_id is generated here, not
-   * trusted from the model, same spirit as pay_for_checkout_session never trusting an amount
-   * -- it's an audit id, not a claim the model gets to make about itself. The model's input
-   * is the event payload verbatim; it's already on the record via the tool_call itself (see
-   * transcripts.ts), so there's nothing further to store here beyond validating it and
-   * handing back the id and sequence number, same as the real audit_events service would. */
+  /** Validates the call, then hands it to AuditEventStore (auditEvents.ts) to resolve its
+   * run_id, assign a hash-chained seq/event_id, and persist `input` verbatim as the payload.
+   * See AuditEventStore's own docstring for what "verbatim" and the hash chain mean. */
   async function recordAuditEvent(input: Record<string, unknown>) {
-    parseAuditEvent(input)
-    auditSeq += 1
-    return { event_id: randomUuidV7(), seq: auditSeq }
+    const parsed = parseAuditEvent(input)
+    const link: AuditEventLink =
+      parsed.type === 'history_insights'
+        ? { type: 'history_insights', updatesEventId: parsed.updates_event_id }
+        : { type: 'recommendation_plan', insightsEventId: parsed.insights_event_id }
+    return auditEvents.record(input, link, {
+      sessionId: preferences.buyerId,
+      buyerId: preferences.buyerId,
+    })
   }
 
   async function getCheckoutSession(input: Record<string, unknown>) {
