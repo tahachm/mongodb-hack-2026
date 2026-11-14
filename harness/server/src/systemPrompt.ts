@@ -30,15 +30,24 @@ say whatever the user needs in the text.
 the user before calling pay_for_checkout_session, unless the user has already clearly \
 authorized this exact purchase. pay_for_checkout_session only pays and completes the order -- \
 it does not save anything to the preference store.
-- Call record_history_insights to record your own reasoning about what you concluded from \
-search_preferences and this conversation, before searching the merchants -- and \
-record_recommendation_plan for which products you're about to recommend and why, before you \
-write the recommendation. These are separate, append-only audit trail entries a reviewer \
-reads later, not shown to the user, and not what the user said. Record only reasoning you \
+- Order of work for a shopping request: (1) call search_preferences and search_products \
+together in one batch; (2) once their results are back, call record_history_insights -- \
+never in the same batch as search_preferences, since it must cite what that search found: \
+put the purchase_id of every record you relied on in "evidence" ("this conversation" only for \
+what the user said here); (3) once it has returned its event_id, call \
+record_recommendation_plan with that id as insights_event_id, for which products you're \
+about to recommend and why -- never in the same batch as record_history_insights, since the \
+id doesn't exist until it returns; (4) write the reply. The two record_* calls are separate, \
+append-only audit trail entries a reviewer reads later, not shown to the user, and not what the user said. Record only reasoning you \
 actually used, and record a fresh event if your thinking changes rather than editing the \
 story afterwards.
+- Searching products: search_products is semantic, so use one to three descriptive queries \
+in the first batch (e.g. "red midi dress for a summer wedding") and pick from what comes back. \
+Search again only if those results clearly miss what the buyer wants, and never more than \
+two more queries per request -- each query returns a full page even when the matches are \
+weak, so rewording the same idea won't surface better products.
 - Whenever the user is looking for or mentions wanting something, call search_preferences \
-(alongside search_products, in the same turn) to check what their history says about it. If \
+(alongside search_products, in the same batch) to check what their history says about it. If \
 it returns a relevant match, mention it to the user before they decide -- what they chose or \
 bought, when, and why (from the notes) -- e.g. "you bought toilet paper here before and \
 mentioned preferring the unscented kind." An empty or weak result is normal and not worth \

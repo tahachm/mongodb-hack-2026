@@ -139,7 +139,8 @@ function recordNode(id: string, record: InspectRecord | undefined, ignoredReason
 /** Groups the session's audit events into runs (one per request) in the order they began. */
 function groupRuns(events: InspectAuditEvent[]): InspectAuditEvent[][] {
   const runs = new Map<string, InspectAuditEvent[]>()
-  for (const event of [...events].sort((a, b) => a.seq - b.seq)) {
+  // By time, not seq: seq counts per buyer, and one chat's events can span two buyers.
+  for (const event of [...events].sort((a, b) => a.at.localeCompare(b.at))) {
     const run = runs.get(event.run_id) ?? []
     run.push(event)
     runs.set(event.run_id, run)
@@ -533,11 +534,20 @@ function buildRun(
   }
 }
 
-export function buildRuns(messages: StoredMessage[], data: InspectData): InspectRun[] {
+export function buildRuns(
+  messages: StoredMessage[],
+  data: InspectData,
+  sessionCreatedAt?: string,
+): InspectRun[] {
   const records = new Map(data.records.map((r) => [r.purchase_id, r]))
   const products = productsById(messages)
   const eventIndex = eventMessageIndex(messages)
-  const runs = groupRuns(data.events)
+  // Session ids can be reused (the harness currently hardcodes one for testing), so the audit
+  // log holds earlier chats' events under the same id too -- keep only this chat's.
+  const events = sessionCreatedAt
+    ? data.events.filter((e) => e.at >= sessionCreatedAt)
+    : data.events
+  const runs = groupRuns(events)
 
   // Each run starts at the user message that preceded its first recorded event, and lasts
   // until the next run's starting message -- so a follow-up like "yes, buy it" (no new

@@ -24,16 +24,16 @@ function defaultAuditEventStore(): AuditEventStore {
   return sharedAuditEvents
 }
 
-/** One executor per chat session, not a shared singleton -- `buyer_id` on every recorded
- * purchase is the harness chat session id, so preferences and audit events recorded in one
- * conversation stay scoped to it. Cached per session (see toolExecutors below) rather than
+/** One executor per chat session, not a shared singleton. Preferences are read and saved
+ * under config.defaultBuyerId (the demo buyer, so chats share one history), or under the chat
+ * session id when that's unset; audit events always keep the chat session id too. Cached per session (see toolExecutors below) rather than
  * rebuilt on every message, just to avoid the churn -- correctness no longer depends on it
  * the way it would if the audit log's sequencing lived in this closure instead of Mongo. */
-function defaultCreateToolExecutor(buyerId: string): ToolExecutor {
+function defaultCreateToolExecutor(sessionId: string): ToolExecutor {
   return createAcpToolExecutor(
     config.merchants,
     config.pspUrl,
-    { baseUrl: config.preferencesUrl, buyerId },
+    { baseUrl: config.preferencesUrl, buyerId: config.defaultBuyerId || sessionId, sessionId },
     defaultAuditEventStore(),
   )
 }

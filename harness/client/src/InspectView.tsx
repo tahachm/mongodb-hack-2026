@@ -205,7 +205,7 @@ export function InspectView() {
   }, [sessionId, messageCount])
 
   const runs = useMemo(
-    () => (session && data ? buildRuns(session.messages, data) : []),
+    () => (session && data ? buildRuns(session.messages, data, session.createdAt) : []),
     [session, data],
   )
   const run = runs.find((r) => r.id === chosenRun) ?? runs.at(-1)

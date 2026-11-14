@@ -44,6 +44,10 @@ export const config = {
     // record_audit_event tool calls were getting truncated mid-JSON at the old cap.
     maxTokens: Number(process.env.ANTHROPIC_MAX_TOKENS) || undefined,
   },
+  // Whose saved history (purchase_vectors) every chat reads and writes. Defaults to the seeded
+  // demo buyer "emily" so new chats can recall past purchases; set DEFAULT_BUYER_ID= (empty)
+  // to give every chat session its own empty history instead.
+  defaultBuyerId: process.env.DEFAULT_BUYER_ID ?? 'emily',
   merchants: parseMerchantUrls(process.env.MERCHANT_URLS),
   pspUrl: (process.env.PSP_URL ?? 'http://127.0.0.1:8081').replace(/\/$/, ''),
   // Raw transcript dump for auditing: after a purchase completes, the *entire* conversation

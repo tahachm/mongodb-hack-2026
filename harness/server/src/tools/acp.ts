@@ -12,8 +12,10 @@ export const acpTools: ToolDefinition[] = [
     description:
       "Search every configured merchant's catalog for products matching a query. " +
       `Returns up to ${MAX_PRODUCTS_PER_MERCHANT} best matches per merchant, grouped by ` +
-      'merchant_id, plus total_matches. If the top results miss what the buyer wants, ' +
-      'search again with a more specific query rather than expecting more results.',
+      'merchant_id, plus total_matches. Search is semantic (ranked by meaning), so one or ' +
+      'two descriptive queries usually cover a request, and every query returns a full ' +
+      'page even when the matches are weak -- more rewordings mostly return the same ' +
+      'products. Search again only if the top results clearly miss what the buyer wants.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -54,10 +56,10 @@ export const acpTools: ToolDefinition[] = [
       '"why?" later. Separate from the preference store: never searched as evidence of ' +
       "what the buyer likes, so this is where your own conclusions belong. Entries can't " +
       'be edited or deleted. Returns { event_id, seq }.\n\n' +
-      "What you concluded from the buyer's history and this conversation, before seeing " +
-      'any products. Record this before asking a follow-up or reading product results. ' +
-      'You can call this in parallel with your first search_products calls, since the ' +
-      "insights don't depend on the products.",
+      "What you concluded from the buyer's history and this conversation -- never from the " +
+      'products. Call it only after search_preferences has returned (never in the same batch), ' +
+      'so you can cite the records it found: put each relied-on record\'s purchase_id in ' +
+      'evidence. Record this before asking a follow-up or recommending anything.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -623,6 +625,9 @@ async function postJson(url: string, body: unknown): Promise<Response> {
 export interface PreferencesContext {
   baseUrl: string
   buyerId: string
+  /** The chat session the audit events belong to, when it differs from the buyer (several
+   * chats can share one demo buyer's history). Defaults to buyerId. */
+  sessionId?: string
 }
 
 /**
@@ -690,7 +695,7 @@ export function createAcpToolExecutor(
     return auditEvents.record(
       input,
       { type: 'history_insights', updatesEventId: parsed.updates_event_id },
-      { sessionId: preferences.buyerId, buyerId: preferences.buyerId },
+      { sessionId: preferences.sessionId ?? preferences.buyerId, buyerId: preferences.buyerId },
     )
   }
 
@@ -699,7 +704,7 @@ export function createAcpToolExecutor(
     return auditEvents.record(
       input,
       { type: 'recommendation_plan', insightsEventId: parsed.insights_event_id },
-      { sessionId: preferences.buyerId, buyerId: preferences.buyerId },
+      { sessionId: preferences.sessionId ?? preferences.buyerId, buyerId: preferences.buyerId },
     )
   }
 
