@@ -21,9 +21,10 @@ export interface PurchaseTranscriptEvent {
  * read later -- the first cut of "structured, auditable events" before anything fancier.
  *
  * One connection for the life of the process, created lazily on first use so a server with no
- * MONGODB_URI configured never tries to dial out. Best-effort like
- * recordPurchasePreferences in tools/acp.ts: a dump failure must never look like the purchase
- * itself failed, so every public method swallows its own errors (logged, not thrown).
+ * MONGODB_URI configured never tries to dial out. Best-effort on its own terms: a dump
+ * failure must never look like the purchase itself failed, so every public method swallows
+ * its own errors (logged, not thrown), unlike the ACP tool calls in tools/acp.ts, which throw
+ * normally and let the model/caller see the failure.
  */
 export class TranscriptStore {
   private client: MongoClient | undefined

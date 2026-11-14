@@ -96,26 +96,37 @@ describe('harness-server chat API', () => {
     })
   })
 
-  it('dumps the full transcript (incl. decision + payment tool calls/results) to Mongo once a purchase completes', async () => {
+  it('dumps the full transcript (incl. audit + payment tool calls/results) to Mongo once a purchase completes', async () => {
     const checkoutOutput = {
       id: 'cs_1',
       merchant_id: 'mall-wart',
       status: 'completed',
       order: { id: 'order_1' },
-      preference_tracking: { recorded: true },
     }
-    const decisionOutput = {
-      decisionId: 'dec_1',
-      product: 'm-1',
-      facts: [
+    const auditInput = {
+      type: 'recommendation_plan',
+      insights_event_id: 'evt_1',
+      searches: ['mouse'],
+      options: [
         {
-          sourceVectorSearch: 'search_products: "mouse"',
-          response: 'a mouse',
-          factImplication: 'matches',
+          option_number: 1,
+          product_id: 'm-1',
+          merchant_ids: ['mall-wart'],
+          price_cents: 2999,
+          why: 'matches the request',
+          insights_used: [],
+          unknowns: [],
+          tradeoff: 'none',
         },
       ],
-      result: 'pick m-1',
+      highlighted_product_id: 'm-1',
+      highlight_reason: 'best match',
+      not_shown: [],
+      assumptions_relied_on: [],
+      no_fit_explanation: null,
+      summary: 'pick m-1',
     }
+    const auditOutput = { event_id: 'evt_2', seq: 1 }
     const recordPurchase = vi.fn().mockResolvedValue(undefined)
     const app = createApp(
       fakeLlm((history) => {
@@ -128,13 +139,9 @@ describe('harness-server chat API', () => {
             content: [
               {
                 type: 'tool_call',
-                id: 'call_decide',
-                name: 'report_product_decision',
-                input: {
-                  product: 'm-1',
-                  facts: decisionOutput.facts,
-                  result: decisionOutput.result,
-                },
+                id: 'call_audit',
+                name: 'record_audit_event',
+                input: auditInput,
               },
             ],
           }
@@ -154,7 +161,7 @@ describe('harness-server chat API', () => {
         }
         return textTurn('all set')
       }),
-      () => async (name) => (name === 'report_product_decision' ? decisionOutput : checkoutOutput),
+      () => async (name) => (name === 'record_audit_event' ? auditOutput : checkoutOutput),
       undefined,
       { recordPurchase, close: vi.fn() } as never,
     )
@@ -174,19 +181,23 @@ describe('harness-server chat API', () => {
       orderId: 'order_1',
     })
     // The dumped transcript is exactly what the buyer-facing response sees: every tool_call
-    // request and tool_result response, not just the final text -- including the decision
+    // request and tool_result response, not just the final text -- including the audit
     // event's own request/response, not only the payment's.
     expect(session.messages).toEqual(replied.body.messages)
     expect(session.messages.map((m: { content: { type: string }[] }) => m.content[0].type)).toEqual(
       ['text', 'tool_call', 'tool_result', 'tool_call', 'tool_result', 'text'],
     )
-    const decisionCall = session.messages[1].content[0]
-    expect(decisionCall).toMatchObject({ type: 'tool_call', name: 'report_product_decision' })
-    const decisionResult = session.messages[2].content[0]
-    expect(decisionResult).toMatchObject({
+    const auditCall = session.messages[1].content[0]
+    expect(auditCall).toMatchObject({
+      type: 'tool_call',
+      name: 'record_audit_event',
+      input: auditInput,
+    })
+    const auditResult = session.messages[2].content[0]
+    expect(auditResult).toMatchObject({
       type: 'tool_result',
-      name: 'report_product_decision',
-      output: decisionOutput,
+      name: 'record_audit_event',
+      output: auditOutput,
     })
   })
 

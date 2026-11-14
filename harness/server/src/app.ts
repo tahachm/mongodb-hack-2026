@@ -10,10 +10,10 @@ import { TranscriptStore, type PurchaseTranscriptEvent } from './transcripts.js'
 
 /** One executor per chat session, not a shared singleton -- `buyer_id` on every recorded
  * purchase is the harness chat session id, so preferences recorded in one conversation stay
- * scoped to it. Also where report_product_decision's "decided" state lives (see acp.ts) --
- * caching one instance per session for its whole lifetime, not recreating it per message
- * (see toolExecutors below), is what lets a decision reported in one message still satisfy
- * create_checkout_session's gate in a later one. */
+ * scoped to it. Also where record_audit_event's per-session `seq` counter lives (see acp.ts)
+ * -- caching one instance per session for its whole lifetime, not recreating it per message
+ * (see toolExecutors below), is what keeps that sequence number increasing across the whole
+ * conversation instead of resetting on every message. */
 function defaultCreateToolExecutor(buyerId: string): ToolExecutor {
   return createAcpToolExecutor(config.merchants, config.pspUrl, {
     baseUrl: config.preferencesUrl,
@@ -31,8 +31,8 @@ function isToolResult(part: ContentPart): part is Extract<ContentPart, { type: '
 
 /** Pulls merchant_id / checkout_session_id / order_id out of every successful
  * `pay_for_checkout_session` tool_result among `turns` -- see payForCheckoutSession in
- * tools/acp.ts for the shape it returns (the merchant's CheckoutSession, flattened, plus
- * `preference_tracking`). A failed call (isError) never triggers a dump. */
+ * tools/acp.ts for the shape it returns (the merchant's CheckoutSession, flattened). A
+ * failed call (isError) never triggers a dump. */
 function purchaseEventsFrom(turns: Turn[]): PurchaseTranscriptEvent[] {
   const events: PurchaseTranscriptEvent[] = []
   for (const turn of turns) {

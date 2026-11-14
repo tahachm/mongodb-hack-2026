@@ -1,7 +1,6 @@
 import express, { type Express } from 'express'
 import type { Server } from 'node:http'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import type { ToolExecutor } from '../agent.js'
 import { createAcpToolExecutor, type PreferencesContext } from './acp.js'
 
 function listen(app: Express): Promise<{ server: Server; url: string }> {
@@ -144,22 +143,6 @@ describe('createAcpToolExecutor', () => {
     return { baseUrl: preferencesUrl, buyerId }
   }
 
-  /** Satisfies create_checkout_session's report_product_decision gate for `product` so tests
-   * about checkout/payment/cancel, not about the gate itself, don't have to restate it. */
-  async function reportDecision(execute: ToolExecutor, product = 'm-1') {
-    await execute('report_product_decision', {
-      product,
-      facts: [
-        {
-          sourceVectorSearch: 'search_products: "wireless mouse"',
-          response: 'Wireless Mouse, $29.99, in stock',
-          factImplication: 'Matches what the buyer asked for and is available.',
-        },
-      ],
-      result: `Selecting ${product}: it matches the request.`,
-    })
-  }
-
   beforeEach(async () => {
     seenAllowances = []
     seenPurchases = []
@@ -208,7 +191,6 @@ describe('createAcpToolExecutor', () => {
       pspUrl,
       preferencesContext(),
     )
-    await reportDecision(execute)
     const created = (await execute('create_checkout_session', {
       merchant_id: 'mall-wart',
       items: [{ id: 'm-1', quantity: 2 }],
@@ -222,13 +204,12 @@ describe('createAcpToolExecutor', () => {
     expect(fetched).toEqual(created)
   })
 
-  it('pays using the session total read from the merchant, not an amount from input, and records preferences', async () => {
+  it('pays using the session total read from the merchant, not an amount from input', async () => {
     const execute = createAcpToolExecutor(
       new Map([['mall-wart', merchantUrl]]),
       pspUrl,
       preferencesContext('buyer_42'),
     )
-    await reportDecision(execute)
     const created = (await execute('create_checkout_session', {
       merchant_id: 'mall-wart',
       items: [{ id: 'm-1', quantity: 1 }],
@@ -239,13 +220,7 @@ describe('createAcpToolExecutor', () => {
       session_id: created.id,
       // An attacker-controlled or hallucinated amount here must be ignored entirely.
       amount: 1,
-      preference_notes: ['bought for a lakeside picnic', 'leans toward budget options'],
-      conversation_notes: 'User wanted something for an upcoming picnic, price-sensitive.',
-    })) as {
-      status: string
-      order: { id: string }
-      preference_tracking: { recorded: boolean; purchase_id?: string; vector_count?: number }
-    }
+    })) as { status: string; order: { id: string } }
 
     expect(paid.status).toBe('completed')
     expect(paid.order.id).toBe('ord_1')
@@ -256,105 +231,8 @@ describe('createAcpToolExecutor', () => {
         merchant_id: 'mall-wart',
       }),
     ])
-
-    expect(paid.preference_tracking).toEqual({
-      recorded: true,
-      purchase_id: 'pur_fake',
-      vector_count: 2,
-    })
-    expect(seenPurchases).toEqual([
-      expect.objectContaining({
-        buyer_id: 'buyer_42',
-        merchant_id: 'mall-wart',
-        notes: 'User wanted something for an upcoming picnic, price-sensitive.',
-        vectors: [
-          { label: 'bought for a lakeside picnic', text: 'bought for a lakeside picnic' },
-          { label: 'leans toward budget options', text: 'leans toward budget options' },
-        ],
-      }),
-    ])
-  })
-
-  it('rejects pay_for_checkout_session without preference_notes', async () => {
-    const execute = createAcpToolExecutor(
-      new Map([['mall-wart', merchantUrl]]),
-      pspUrl,
-      preferencesContext(),
-    )
-    await reportDecision(execute)
-    const created = (await execute('create_checkout_session', {
-      merchant_id: 'mall-wart',
-      items: [{ id: 'm-1', quantity: 1 }],
-    })) as { id: string }
-
-    await expect(
-      execute('pay_for_checkout_session', {
-        merchant_id: 'mall-wart',
-        session_id: created.id,
-        conversation_notes: 'some notes',
-      }),
-    ).rejects.toThrow(/"preference_notes" must be a non-empty array/)
-    expect(seenAllowances).toEqual([]) // no money moved
-  })
-
-  it('rejects pay_for_checkout_session without conversation_notes', async () => {
-    const execute = createAcpToolExecutor(
-      new Map([['mall-wart', merchantUrl]]),
-      pspUrl,
-      preferencesContext(),
-    )
-    await reportDecision(execute)
-    const created = (await execute('create_checkout_session', {
-      merchant_id: 'mall-wart',
-      items: [{ id: 'm-1', quantity: 1 }],
-    })) as { id: string }
-
-    await expect(
-      execute('pay_for_checkout_session', {
-        merchant_id: 'mall-wart',
-        session_id: created.id,
-        preference_notes: ['likes blue'],
-      }),
-    ).rejects.toThrow(/"conversation_notes" must be a non-empty string/)
-    expect(seenAllowances).toEqual([]) // no money moved
-  })
-
-  it('completes the purchase even if recording preferences fails, and reports it', async () => {
-    preferencesServer.close()
-    const brokenPreferences = express()
-    brokenPreferences.use(express.json())
-    brokenPreferences.post('/purchases', (_req, res) =>
-      res.status(500).json({ message: 'db down' }),
-    )
-    ;({ server: preferencesServer, url: preferencesUrl } = await listen(brokenPreferences))
-
-    const execute = createAcpToolExecutor(
-      new Map([['mall-wart', merchantUrl]]),
-      pspUrl,
-      preferencesContext(),
-    )
-    await reportDecision(execute)
-    const created = (await execute('create_checkout_session', {
-      merchant_id: 'mall-wart',
-      items: [{ id: 'm-1', quantity: 1 }],
-    })) as { id: string }
-
-    const paid = (await execute('pay_for_checkout_session', {
-      merchant_id: 'mall-wart',
-      session_id: created.id,
-      preference_notes: ['likes blue'],
-      conversation_notes: 'some notes',
-    })) as {
-      status: string
-      preference_tracking: { recorded: boolean; error?: string }
-    }
-
-    // The charge still went through -- a tracking outage must never look like a failed
-    // purchase or trigger a retry (which would double-charge).
-    expect(paid.status).toBe('completed')
-    expect(seenAllowances).toHaveLength(1)
-    expect(paid.preference_tracking.recorded).toBe(false)
-    expect(paid.preference_tracking.error).toMatch(/500/)
+    // Recording preferences is a separate tool call now -- paying never touches /purchases.
+    expect(seenPurchases).toEqual([])
   })
 
   it('cancels a checkout session', async () => {
@@ -363,7 +241,6 @@ describe('createAcpToolExecutor', () => {
       pspUrl,
       preferencesContext(),
     )
-    await reportDecision(execute)
     const created = (await execute('create_checkout_session', {
       merchant_id: 'mall-wart',
       items: [{ id: 'm-1', quantity: 1 }],
@@ -377,79 +254,120 @@ describe('createAcpToolExecutor', () => {
     expect(canceled.status).toBe('canceled')
   })
 
-  it('rejects create_checkout_session for an item with no reported decision', async () => {
-    const execute = createAcpToolExecutor(
-      new Map([['mall-wart', merchantUrl]]),
-      pspUrl,
-      preferencesContext(),
-    )
-    await expect(
-      execute('create_checkout_session', {
-        merchant_id: 'mall-wart',
-        items: [{ id: 'm-1', quantity: 1 }],
-      }),
-    ).rejects.toThrow(/report_product_decision must be called.*missing for: m-1/)
-  })
+  it('records a history_insights audit event, returning a generated event_id and seq', async () => {
+    const execute = createAcpToolExecutor(new Map(), pspUrl, preferencesContext())
+    const result = (await execute('record_audit_event', {
+      type: 'history_insights',
+      updates_event_id: null,
+      request: 'A comfortable hoodie. No size, colour, budget or occasion given.',
+      insights: [
+        {
+          facet: 'size',
+          finding: "Wears size M in sweatshirts; said 'M' when buying one in September.",
+          evidence: ['pur_3a91c0d2e4f5a6b7c8d9'],
+          confidence: 'high',
+        },
+      ],
+      ignored_records: [],
+      gaps: [
+        {
+          facet: 'comfort',
+          important: false,
+          action: 'skip',
+          note: 'No history on what comfortable means to them.',
+        },
+      ],
+      assumptions: ['No budget limit; show a spread of prices.'],
+      follow_up_question: null,
+      summary: 'They want a comfortable hoodie; history shows size M and dark colours.',
+    })) as { event_id: string; seq: number }
 
-  it('accepts create_checkout_session once a decision was reported for every item, in an earlier call', async () => {
-    const execute = createAcpToolExecutor(
-      new Map([['mall-wart', merchantUrl]]),
-      pspUrl,
-      preferencesContext(),
-    )
-    // Simulates the decision being reported in an earlier message of the same conversation --
-    // the executor is reused for the whole session (see app.ts), so this must still count.
-    await reportDecision(execute)
-    const created = (await execute('create_checkout_session', {
-      merchant_id: 'mall-wart',
-      items: [{ id: 'm-1', quantity: 1 }],
-    })) as { status: string }
-    expect(created.status).toBe('ready_for_payment')
-  })
-
-  it('records a product decision with a server-generated decisionId, echoing the input back', async () => {
-    const execute = createAcpToolExecutor(
-      new Map([['mall-wart', merchantUrl]]),
-      pspUrl,
-      preferencesContext(),
-    )
-    const facts = [
-      {
-        sourceVectorSearch: 'recall_past_purchases: "mouse"',
-        response: 'Bought a wired mouse last year, noted "prefers wireless next time"',
-        factImplication: 'Buyer wants wireless this time.',
-      },
-    ]
-    const decision = (await execute('report_product_decision', {
-      product: 'm-1',
-      facts,
-      result: 'm-1 is wireless and matches the stated preference.',
-    })) as { decisionId: string; product: string; facts: unknown[]; result: string }
-
-    expect(decision.decisionId).toMatch(
+    expect(result.event_id).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
     )
-    expect(decision.product).toBe('m-1')
-    expect(decision.facts).toEqual(facts)
-    expect(decision.result).toBe('m-1 is wireless and matches the stated preference.')
+    expect(result.seq).toBe(1)
   })
 
-  it('rejects report_product_decision without any facts', async () => {
+  it('records a recommendation_plan audit event, and seq increases across calls on the same executor', async () => {
     const execute = createAcpToolExecutor(new Map(), pspUrl, preferencesContext())
-    await expect(
-      execute('report_product_decision', { product: 'm-1', facts: [], result: 'because' }),
-    ).rejects.toThrow(/"facts" must be a non-empty array/)
+    await execute('record_audit_event', {
+      type: 'history_insights',
+      updates_event_id: null,
+      request: 'req',
+      insights: [],
+      ignored_records: [],
+      gaps: [],
+      assumptions: [],
+      follow_up_question: null,
+      summary: 'summary',
+    })
+    const result = (await execute('record_audit_event', {
+      type: 'recommendation_plan',
+      insights_event_id: 'evt_6d2e91a4c07b',
+      searches: ['hoodie', 'hooded'],
+      options: [
+        {
+          option_number: 1,
+          product_id: 'clothing-03469',
+          merchant_ids: ['threadbarn'],
+          price_cents: 1079,
+          why: 'Black, size M, lowest price.',
+          insights_used: ['colour', 'size'],
+          unknowns: ['material'],
+          tradeoff: 'Same colour as one they already have.',
+        },
+      ],
+      highlighted_product_id: 'clothing-03469',
+      highlight_reason: 'Matches settled preferences at the lowest price.',
+      not_shown: [{ product_id: 'clothing-03360', reason: 'Black like option 1 but pricier.' }],
+      assumptions_relied_on: ['No budget limit; show a spread of prices.'],
+      no_fit_explanation: null,
+      summary: 'One hooded sweatshirt in size M, led by the cheapest black one.',
+    })) as { event_id: string; seq: number }
+
+    expect(result.seq).toBe(2)
   })
 
-  it('rejects report_product_decision when a fact is missing a required field', async () => {
+  it('rejects record_audit_event with an unknown type', async () => {
+    const execute = createAcpToolExecutor(new Map(), pspUrl, preferencesContext())
+    await expect(execute('record_audit_event', { type: 'something_else' })).rejects.toThrow(
+      /"type" must be one of: history_insights, recommendation_plan/,
+    )
+  })
+
+  it('rejects history_insights with a bad confidence value, naming which insight', async () => {
     const execute = createAcpToolExecutor(new Map(), pspUrl, preferencesContext())
     await expect(
-      execute('report_product_decision', {
-        product: 'm-1',
-        facts: [{ sourceVectorSearch: 'search_products: "mouse"', response: 'a mouse' }],
-        result: 'because',
+      execute('record_audit_event', {
+        type: 'history_insights',
+        updates_event_id: null,
+        request: 'req',
+        insights: [{ facet: 'size', finding: 'f', evidence: [], confidence: 'certain' }],
+        ignored_records: [],
+        gaps: [],
+        assumptions: [],
+        follow_up_question: null,
+        summary: 'summary',
       }),
-    ).rejects.toThrow(/facts\[0\]\.factImplication must be a non-empty string/)
+    ).rejects.toThrow(/insights\[0\]: "confidence" must be one of: high, medium, low/)
+  })
+
+  it('rejects recommendation_plan missing a required option field', async () => {
+    const execute = createAcpToolExecutor(new Map(), pspUrl, preferencesContext())
+    await expect(
+      execute('record_audit_event', {
+        type: 'recommendation_plan',
+        insights_event_id: 'evt_1',
+        searches: ['hoodie'],
+        options: [{ option_number: 1, product_id: 'p-1' }],
+        highlighted_product_id: null,
+        highlight_reason: null,
+        not_shown: [],
+        assumptions_relied_on: [],
+        no_fit_explanation: null,
+        summary: 'summary',
+      }),
+    ).rejects.toThrow(/options\[0\]: "merchant_ids" must be an array of strings/)
   })
 
   it('rejects search_products when no merchants are configured', async () => {
@@ -459,15 +377,18 @@ describe('createAcpToolExecutor', () => {
     )
   })
 
-  it('recalls a relevant past purchase by querying with raw text, scoping to buyer_id', async () => {
+  it('searches preferences with structured queries, scoping to buyer_id', async () => {
     const execute = createAcpToolExecutor(
       new Map([['mall-wart', merchantUrl]]),
       pspUrl,
       preferencesContext('buyer_42'),
     )
 
-    const result = (await execute('recall_past_purchases', {
-      queries: ['toilet paper', 'something unrelated'],
+    const result = (await execute('search_preferences', {
+      queries: [
+        { id: 'toilet paper', text: 'The user mentions wanting toilet paper', limit: 3 },
+        { id: 'something unrelated', text: 'something unrelated' },
+      ],
     })) as { results: Array<{ id: string; matches: Array<Record<string, unknown>> }> }
 
     expect(result.results).toEqual([
@@ -487,27 +408,130 @@ describe('createAcpToolExecutor', () => {
       expect.objectContaining({
         buyer_id: 'buyer_42',
         queries: [
-          { id: 'toilet paper', text: 'toilet paper' },
+          { id: 'toilet paper', text: 'The user mentions wanting toilet paper', limit: 3 },
           { id: 'something unrelated', text: 'something unrelated' },
         ],
       }),
     ])
   })
 
-  it('passes merchant_id through to recall_past_purchases when given', async () => {
+  it('passes merchant_id through to search_preferences when given', async () => {
     const execute = createAcpToolExecutor(
       new Map([['mall-wart', merchantUrl]]),
       pspUrl,
       preferencesContext(),
     )
-    await execute('recall_past_purchases', { queries: ['toilet paper'], merchant_id: 'mall-wart' })
+    await execute('search_preferences', {
+      queries: [{ id: 'toilet paper', text: 'toilet paper' }],
+      merchant_id: 'mall-wart',
+    })
     expect(seenSearches).toEqual([expect.objectContaining({ merchant_id: 'mall-wart' })])
   })
 
-  it('rejects recall_past_purchases without any queries', async () => {
+  it('rejects search_preferences without any queries', async () => {
     const execute = createAcpToolExecutor(new Map(), pspUrl, preferencesContext())
-    await expect(execute('recall_past_purchases', { queries: [] })).rejects.toThrow(
+    await expect(execute('search_preferences', { queries: [] })).rejects.toThrow(
       /"queries" must be a non-empty array/,
     )
+  })
+
+  it('saves a purchased preference record, building notes and one vector per narrative field', async () => {
+    const execute = createAcpToolExecutor(new Map(), pspUrl, preferencesContext('buyer_42'))
+    const product = { id: 'clothing-03491', name: 'Thread Barn Hooded Sweatshirt, M, Heather Gray' }
+
+    const result = (await execute('save_preference_record', {
+      kind: 'purchased',
+      request: "The user asked: 'I want a comfortable hoodie'.",
+      comparison: 'The assistant showed three hooded sweatshirts in size M.',
+      decision:
+        'The user chose the heather gray one. They said the black ones look too similar to one they own.',
+      merchant_id: 'threadbarn',
+      product,
+      options_shown: [
+        { merchant_id: 'threadbarn', product_id: 'clothing-03469' },
+        { merchant_id: 'threadbarn', product_id: 'clothing-03491' },
+      ],
+    })) as { purchase_id: string; vector_count: number }
+
+    expect(result).toEqual(expect.objectContaining({ purchase_id: 'pur_fake', vector_count: 3 }))
+    expect(seenPurchases).toEqual([
+      {
+        buyer_id: 'buyer_42',
+        merchant_id: 'threadbarn',
+        product,
+        notes:
+          'Kind: purchased\n' +
+          "Request: The user asked: 'I want a comfortable hoodie'.\n" +
+          'Options shown: The assistant showed three hooded sweatshirts in size M.\n' +
+          'Decision: The user chose the heather gray one. They said the black ones look too ' +
+          'similar to one they own.\n' +
+          'Option ids: threadbarn/clothing-03469, threadbarn/clothing-03491',
+        vectors: [
+          { label: 'request', text: "The user asked: 'I want a comfortable hoodie'." },
+          { label: 'comparison', text: 'The assistant showed three hooded sweatshirts in size M.' },
+          {
+            label: 'decision',
+            text:
+              'The user chose the heather gray one. They said the black ones look too similar ' +
+              'to one they own.',
+          },
+        ],
+      },
+    ])
+  })
+
+  it('saves a stated_preference record with an empty comparison and null product as {}', async () => {
+    const execute = createAcpToolExecutor(new Map(), pspUrl, preferencesContext())
+    await execute('save_preference_record', {
+      kind: 'stated_preference',
+      request: "The user said: 'I've gone vegetarian.'",
+      comparison: '',
+      decision: 'n/a',
+      merchant_id: null,
+      product: null,
+      options_shown: [],
+    })
+    expect(seenPurchases).toEqual([
+      expect.objectContaining({
+        merchant_id: null,
+        product: {},
+        // No vector for the empty comparison field -- only request and decision.
+        vectors: [
+          { label: 'request', text: "The user said: 'I've gone vegetarian.'" },
+          { label: 'decision', text: 'n/a' },
+        ],
+      }),
+    ])
+  })
+
+  it('rejects save_preference_record with an unknown kind', async () => {
+    const execute = createAcpToolExecutor(new Map(), pspUrl, preferencesContext())
+    await expect(
+      execute('save_preference_record', {
+        kind: 'bought_it',
+        request: 'r',
+        comparison: '',
+        decision: 'd',
+        merchant_id: null,
+        product: null,
+        options_shown: [],
+      }),
+    ).rejects.toThrow(
+      /"kind" must be one of: purchased, selected, rejected_all, no_decision, stated_preference/,
+    )
+  })
+
+  it('rejects save_preference_record missing a required field', async () => {
+    const execute = createAcpToolExecutor(new Map(), pspUrl, preferencesContext())
+    await expect(
+      execute('save_preference_record', {
+        kind: 'no_decision',
+        request: 'r',
+        comparison: '',
+        decision: 'd',
+        merchant_id: null,
+        product: null,
+      }),
+    ).rejects.toThrow(/"options_shown" must be an array of objects/)
   })
 })
