@@ -21,7 +21,7 @@ fun main() {
     runBlocking { PurchaseStore.ensureIndex() }
     println(
         "[preferences] past-purchase vector store on port ${Config.port}, db '${Config.dbName}', " +
-            "embedding dimensions ${Config.embeddingDimensions}"
+            "Atlas Automated Embedding model '${Config.embeddingModel}'"
     )
     embeddedServer(Netty, port = Config.port, host = "0.0.0.0", module = Application::module).start(wait = true)
 }
@@ -45,8 +45,9 @@ fun Application.module() {
         }
 
         // Record purchase: the agent calls this right after a checkout completes. One or more
-        // precomputed embeddings (the agent owns the embedding model, not us), the product
-        // listing that was bought, and freeform notes from the conversation that led to it.
+        // raw-text notes (we embed nothing ourselves -- Atlas Automated Embedding does, from
+        // `embedding_text`), the product listing that was bought, and freeform notes from the
+        // conversation that led to it.
         post("/purchases") {
             val rawBody = call.receiveText()
             val req = runCatching { json.decodeFromString(RecordPurchaseRequest.serializer(), rawBody) }.getOrNull()
@@ -73,13 +74,9 @@ fun Application.module() {
     }
 }
 
-private fun validateEmbedding(embedding: List<Float>, param: String): JsonElement? {
-    if (embedding.size != Config.embeddingDimensions) {
-        return apiError(
-            "invalid_embedding_dimensions",
-            "embedding has ${embedding.size} dimensions, expected ${Config.embeddingDimensions}",
-            param = param,
-        )
+private fun validateVectorText(text: String, param: String): JsonElement? {
+    if (text.isBlank()) {
+        return apiError("missing_vector_text", "text must not be blank", param = param)
     }
     return null
 }
@@ -95,7 +92,7 @@ private suspend fun recordPurchase(req: RecordPurchaseRequest): Pair<HttpStatusC
         return HttpStatusCode.BadRequest to apiError("missing_vectors", "at least one vector is required", param = "$.vectors")
     }
     req.vectors.forEachIndexed { i, v ->
-        validateEmbedding(v.embedding, "$.vectors[$i].embedding")?.let { return HttpStatusCode.BadRequest to it }
+        validateVectorText(v.text, "$.vectors[$i].text")?.let { return HttpStatusCode.BadRequest to it }
     }
 
     val purchaseId = "pur_" + randomHex(10)
@@ -118,7 +115,7 @@ private suspend fun bulkSearch(req: BulkSearchRequest): Pair<HttpStatusCode, Jso
         if (q.id.isBlank()) {
             return HttpStatusCode.BadRequest to apiError("missing_query_id", "query id is required", param = "$.queries[$i].id")
         }
-        validateEmbedding(q.embedding, "$.queries[$i].embedding")?.let { return HttpStatusCode.BadRequest to it }
+        validateVectorText(q.text, "$.queries[$i].text")?.let { return HttpStatusCode.BadRequest to it }
     }
 
     val results = PurchaseStore.search(req.buyerId, req.merchantId, req.queries)

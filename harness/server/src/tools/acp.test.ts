@@ -1,7 +1,6 @@
 import express, { type Express } from 'express'
 import type { Server } from 'node:http'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import type { Embedder } from '../embeddings.js'
 import { createAcpToolExecutor, type PreferencesContext } from './acp.js'
 
 function listen(app: Express): Promise<{ server: Server; url: string }> {
@@ -117,16 +116,6 @@ function fakePreferences(
   return app
 }
 
-/** Fake embedder: deterministic, no real API call -- returns one 3-float vector per input
- * text, distinguished by index so tests can assert the count without caring about values. */
-function fakeEmbedder(): Embedder {
-  return {
-    async embed(texts: string[]) {
-      return texts.map((_, i) => [i, 0, 0])
-    },
-  }
-}
-
 /** Fake PSP: always approves, echoing back the amount it was asked to delegate -- tests
  * assert on *that* to prove the executor reads the real total rather than trusting input. */
 function fakePsp(seenAllowances: Array<Record<string, unknown>>) {
@@ -151,7 +140,7 @@ describe('createAcpToolExecutor', () => {
   let seenSearches: Array<Record<string, unknown>>
 
   function preferencesContext(buyerId = 'buyer_1'): PreferencesContext {
-    return { baseUrl: preferencesUrl, buyerId, embedder: fakeEmbedder() }
+    return { baseUrl: preferencesUrl, buyerId }
   }
 
   beforeEach(async () => {
@@ -260,8 +249,8 @@ describe('createAcpToolExecutor', () => {
         merchant_id: 'mall-wart',
         notes: 'User wanted something for an upcoming picnic, price-sensitive.',
         vectors: [
-          { label: 'bought for a lakeside picnic', embedding: [0, 0, 0] },
-          { label: 'leans toward budget options', embedding: [1, 0, 0] },
+          { label: 'bought for a lakeside picnic', text: 'bought for a lakeside picnic' },
+          { label: 'leans toward budget options', text: 'leans toward budget options' },
         ],
       }),
     ])
@@ -372,7 +361,7 @@ describe('createAcpToolExecutor', () => {
     )
   })
 
-  it('recalls a relevant past purchase, embedding each query and scoping to buyer_id', async () => {
+  it('recalls a relevant past purchase by querying with raw text, scoping to buyer_id', async () => {
     const execute = createAcpToolExecutor(
       new Map([['mall-wart', merchantUrl]]),
       pspUrl,
@@ -400,8 +389,8 @@ describe('createAcpToolExecutor', () => {
       expect.objectContaining({
         buyer_id: 'buyer_42',
         queries: [
-          { id: 'toilet paper', embedding: [0, 0, 0] },
-          { id: 'something unrelated', embedding: [1, 0, 0] },
+          { id: 'toilet paper', text: 'toilet paper' },
+          { id: 'something unrelated', text: 'something unrelated' },
         ],
       }),
     ])

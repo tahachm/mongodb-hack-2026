@@ -1,24 +1,22 @@
 package com.mongodbhack.preferences
 
-import com.mongodb.client.model.Aggregates
-import com.mongodb.client.model.Filters
 import com.mongodb.client.model.SearchIndexModel
 import com.mongodb.client.model.SearchIndexType
-import com.mongodb.client.model.search.SearchPath
-import com.mongodb.client.model.search.VectorSearchOptions
 import com.mongodb.kotlin.client.coroutine.MongoClient
 import com.mongodb.kotlin.client.coroutine.MongoCollection
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.toList
 import org.bson.Document
-import org.bson.conversions.Bson
 
 /**
- * All past-purchase embeddings, in Atlas, queried with `$vectorSearch`. Each stored document is
- * one (purchase, vector) pair: a purchase with N `vectors` in its `RecordPurchaseRequest` becomes
- * N documents here, all sharing `purchase_id`/`product`/`notes` so a vector-search hit on any one
- * of them resolves to the full purchase. In-process index lifecycle only -- this object owns the
+ * All past-purchase notes, in Atlas, queried with `$vectorSearch`. Each stored document is one
+ * (purchase, note) pair: a purchase with N `vectors` in its `RecordPurchaseRequest` becomes N
+ * documents here, all sharing `purchase_id`/`product`/`notes` so a vector-search hit on any one
+ * of them resolves to the full purchase. We never generate or store an embedding ourselves --
+ * the `embedding_text` field is indexed with Atlas Vector Search's Automated Embedding
+ * (`autoEmbed`), which sends the text to a Voyage AI model and manages the resulting vector
+ * entirely on MongoDB's side. In-process index lifecycle only -- this object owns the
  * MongoClient for the life of the server.
  */
 object PurchaseStore {
@@ -28,10 +26,9 @@ object PurchaseStore {
 
     /**
      * Best-effort: creates the collection and its vector search index if they don't exist yet.
-     * Atlas builds search indexes asynchronously (and Atlas Search index management needs a
-     * dedicated/serverless tier or M10+), so failures here are logged, not fatal -- the service
-     * still starts, `/purchases` still records data, and `/purchases/search` just returns no
-     * matches until the index exists and finishes building.
+     * Atlas builds search indexes asynchronously, so failures here are logged, not fatal -- the
+     * service still starts, `/purchases` still records data, and `/purchases/search` just
+     * returns no matches until the index exists and finishes building.
      */
     suspend fun ensureIndex() {
         runCatching { client.getDatabase(Config.dbName).createCollection(Config.collectionName) }
@@ -44,8 +41,9 @@ object PurchaseStore {
         }.onFailure {
             println(
                 "[preferences] warning: could not create vector search index '${Config.vectorIndexName}' " +
-                    "(it may already be building, or this cluster tier doesn't support managing it here -- " +
-                    "create it manually in Atlas if search keeps returning empty): ${it.message}"
+                    "(it may already be building, or Automated Embedding needs a Voyage AI key configured " +
+                    "on this cluster in Atlas -- create it manually if search keeps returning empty): " +
+                    it.message
             )
         }
     }
@@ -55,10 +53,10 @@ object PurchaseStore {
         Document(
             "fields",
             listOf(
-                Document("type", "vector")
-                    .append("path", "embedding")
-                    .append("numDimensions", Config.embeddingDimensions)
-                    .append("similarity", "cosine"),
+                Document("type", "autoEmbed")
+                    .append("path", "embedding_text")
+                    .append("model", Config.embeddingModel)
+                    .append("modality", "text"),
                 Document("type", "filter").append("path", "buyer_id"),
                 Document("type", "filter").append("path", "merchant_id"),
             ),
@@ -66,7 +64,7 @@ object PurchaseStore {
         SearchIndexType.vectorSearch(),
     )
 
-    /** Inserts one document per vector; all share `purchaseId` so a search hit on any vector
+    /** Inserts one document per note; all share `purchaseId` so a search hit on any one of them
      * can be resolved back to the whole purchase. */
     suspend fun record(purchaseId: String, created: String, req: RecordPurchaseRequest) {
         val productBson = req.product.toBson()
@@ -76,7 +74,7 @@ object PurchaseStore {
                 .append("buyer_id", req.buyerId)
                 .append("merchant_id", req.merchantId)
                 .append("label", v.label)
-                .append("embedding", v.embedding.map { it.toDouble() })
+                .append("embedding_text", v.text)
                 .append("product", productBson)
                 .append("notes", req.notes)
                 .append("created", created)
@@ -97,18 +95,22 @@ object PurchaseStore {
         val limit = q.limit.coerceIn(1, 50).toLong()
         val numCandidates = (limit * 10).coerceAtLeast(100).coerceAtMost(10_000)
 
-        val filters: List<Bson> = buildList {
-            add(Filters.eq("buyer_id", buyerId))
-            merchantId?.let { add(Filters.eq("merchant_id", it)) }
+        // Plain equality fields combine with implicit AND -- no need for an explicit $and.
+        val filter = Document("buyer_id", buyerId).apply {
+            merchantId?.let { append("merchant_id", it) }
         }
-        val filter: Bson = if (filters.size == 1) filters[0] else Filters.and(filters)
 
-        val vectorSearchStage = Aggregates.vectorSearch(
-            SearchPath.fieldPath("embedding"),
-            q.embedding.map { it.toDouble() },
-            Config.vectorIndexName,
-            limit,
-            VectorSearchOptions.approximateVectorSearchOptions(numCandidates).filter(filter),
+        // Built as a raw stage, not via the Aggregates.vectorSearch() builder: that builder only
+        // supports `queryVector` (precomputed floats). Automated Embedding's `query.text` form
+        // is newer than this driver's typed helpers, so we speak the wire protocol directly.
+        val vectorSearchStage = Document(
+            "\$vectorSearch",
+            Document("index", Config.vectorIndexName)
+                .append("path", "embedding_text")
+                .append("query", Document("text", q.text))
+                .append("limit", limit)
+                .append("numCandidates", numCandidates)
+                .append("filter", filter),
         )
         val scoreStage = Document("\$set", Document("score", Document("\$meta", "vectorSearchScore")))
 

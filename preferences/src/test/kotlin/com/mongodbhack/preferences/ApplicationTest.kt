@@ -14,7 +14,6 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -22,16 +21,15 @@ import kotlin.test.assertTrue
  * before `PurchaseStore` is touched, so none of it needs a live MongoDB connection (same spirit
  * as merchant/psp: no external dependency in the test suite). Actually recording a purchase or
  * running `$vectorSearch` against Atlas is exercised manually against a real cluster, not here --
- * Atlas Search index builds are asynchronous, so a round trip through a freshly created index
- * would be flaky by construction, not a real bug in this service.
+ * Atlas Search index builds (and Automated Embedding's own async sync) are asynchronous, so a
+ * round trip through a freshly created index would be flaky by construction, not a real bug in
+ * this service.
  */
 class ApplicationTest {
 
-    private fun validEmbedding() = List(Config.embeddingDimensions) { 0.1f }
-
     private fun recordBody(buyerId: String = "cust_1", notes: String = "n") = """
         {"buyer_id": "$buyerId", "product": {"id": "sku_1", "name": "Widget"}, "notes": "$notes",
-         "vectors": [{"label": "default", "embedding": ${validEmbedding()}}]}
+         "vectors": [{"label": "default", "text": "likes blue, budget conscious"}]}
     """.trimIndent()
 
     @Test
@@ -120,7 +118,7 @@ class ApplicationTest {
         val response = client.post("/purchases") {
             contentType(ContentType.Application.Json)
             header("Idempotency-Key", "k5")
-            setBody("""{"buyer_id": "cust_1", "product": "sku_1", "vectors": [{"embedding": ${validEmbedding()}}]}""")
+            setBody("""{"buyer_id": "cust_1", "product": "sku_1", "vectors": [{"text": "note"}]}""")
         }
         assertEquals(HttpStatusCode.BadRequest, response.status)
         assertEquals("invalid_product", Json.parseToJsonElement(response.bodyAsText()).jsonObject["code"]!!.jsonPrimitive.content)
@@ -139,17 +137,17 @@ class ApplicationTest {
     }
 
     @Test
-    fun `purchases rejects an embedding with the wrong dimensions`() = testApplication {
+    fun `purchases rejects a vector with blank text`() = testApplication {
         application { module() }
         val response = client.post("/purchases") {
             contentType(ContentType.Application.Json)
             header("Idempotency-Key", "k7")
-            setBody("""{"buyer_id": "cust_1", "product": {"id": "sku_1"}, "vectors": [{"embedding": [0.1, 0.2]}]}""")
+            setBody("""{"buyer_id": "cust_1", "product": {"id": "sku_1"}, "vectors": [{"text": "  "}]}""")
         }
         assertEquals(HttpStatusCode.BadRequest, response.status)
         val error = Json.parseToJsonElement(response.bodyAsText()).jsonObject
-        assertEquals("invalid_embedding_dimensions", error["code"]!!.jsonPrimitive.content)
-        assertEquals("\$.vectors[0].embedding", error["param"]!!.jsonPrimitive.content)
+        assertEquals("missing_vector_text", error["code"]!!.jsonPrimitive.content)
+        assertEquals("\$.vectors[0].text", error["param"]!!.jsonPrimitive.content)
     }
 
     @Test
@@ -169,7 +167,7 @@ class ApplicationTest {
         val response = client.post("/purchases/search") {
             contentType(ContentType.Application.Json)
             header("Idempotency-Key", "k8")
-            setBody("""{"buyer_id": "", "queries": [{"id": "q1", "embedding": ${validEmbedding()}}]}""")
+            setBody("""{"buyer_id": "", "queries": [{"id": "q1", "text": "toilet paper"}]}""")
         }
         assertEquals(HttpStatusCode.BadRequest, response.status)
         assertEquals("missing_buyer_id", Json.parseToJsonElement(response.bodyAsText()).jsonObject["code"]!!.jsonPrimitive.content)
@@ -193,23 +191,23 @@ class ApplicationTest {
         val response = client.post("/purchases/search") {
             contentType(ContentType.Application.Json)
             header("Idempotency-Key", "k10")
-            setBody("""{"buyer_id": "cust_1", "queries": [{"id": "", "embedding": ${validEmbedding()}}]}""")
+            setBody("""{"buyer_id": "cust_1", "queries": [{"id": "", "text": "toilet paper"}]}""")
         }
         assertEquals(HttpStatusCode.BadRequest, response.status)
         assertEquals("missing_query_id", Json.parseToJsonElement(response.bodyAsText()).jsonObject["code"]!!.jsonPrimitive.content)
     }
 
     @Test
-    fun `search rejects a query embedding with the wrong dimensions`() = testApplication {
+    fun `search rejects a query with blank text`() = testApplication {
         application { module() }
         val response = client.post("/purchases/search") {
             contentType(ContentType.Application.Json)
             header("Idempotency-Key", "k11")
-            setBody("""{"buyer_id": "cust_1", "queries": [{"id": "q1", "embedding": [0.1, 0.2]}]}""")
+            setBody("""{"buyer_id": "cust_1", "queries": [{"id": "q1", "text": ""}]}""")
         }
         assertEquals(HttpStatusCode.BadRequest, response.status)
         val error = Json.parseToJsonElement(response.bodyAsText()).jsonObject
-        assertEquals("invalid_embedding_dimensions", error["code"]!!.jsonPrimitive.content)
-        assertEquals("\$.queries[0].embedding", error["param"]!!.jsonPrimitive.content)
+        assertEquals("missing_vector_text", error["code"]!!.jsonPrimitive.content)
+        assertEquals("\$.queries[0].text", error["param"]!!.jsonPrimitive.content)
     }
 }

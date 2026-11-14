@@ -36,11 +36,12 @@ cd preferences && MONGODB_URI="mongodb+srv://..." ./gradlew run   # :8083
 
 `preferences` requires `MONGODB_URI` (an Atlas connection string -- Atlas Vector Search
 isn't available against a local `mongod`). `MONGODB_DB` (default `agentic_commerce`) and
-`EMBEDDING_DIMENSIONS` (default `768`, must match whatever embedding model the agent
-calls) are optional. On startup it creates the `purchase_vectors` collection and its
-`purchase_vector_index` Atlas Vector Search index if they don't exist yet; that build is
-asynchronous, so `/purchases/search` can return no matches for the first minute or so
-after a fresh start.
+`EMBEDDING_MODEL` (default `voyage-4`) are optional. Vectors are never computed by this
+service or the agent -- the index is `autoEmbed`, so MongoDB Atlas Vector Search sends the
+raw text straight to a Voyage AI model and manages the resulting embedding entirely
+server-side. On startup this service creates the `purchase_vectors` collection and its
+`purchase_vector_index` index if they don't exist yet; that build is asynchronous, so
+`/purchases/search` can return no matches for the first minute or so after a fresh start.
 
 ## Endpoints
 
@@ -68,10 +69,12 @@ different body is a `422 idempotency_conflict`. Errors are `{type, code, message
 
 **preferences**
 - `GET /health`
-- `POST /purchases` — record a purchase: one or more precomputed embedding vectors (the
-  agent owns the embedding model), the product listing bought, and freeform conversation
-  notes. Each vector is stored alongside the same listing/notes under a shared purchase id.
-- `POST /purchases/search` — bulk semantic lookup: several query vectors in one request,
+- `POST /purchases` — record a purchase: one or more raw-text notes (MongoDB Atlas Vector
+  Search's Automated Embedding generates the vectors server-side via Voyage AI -- this
+  service never computes or sees one), the product listing bought, and freeform
+  conversation notes. Each note is stored alongside the same listing/notes under a shared
+  purchase id.
+- `POST /purchases/search` — bulk semantic lookup: several raw-text queries in one request,
   each run as its own `$vectorSearch` scoped to one `buyer_id` (and optionally one
   `merchant_id`), returning ranked past purchases per query.
 

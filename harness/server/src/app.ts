@@ -2,17 +2,10 @@ import cors from 'cors'
 import express from 'express'
 import { runAgentTurn, type ToolExecutor } from './agent.js'
 import { config } from './config.js'
-import { createGeminiEmbedder, createUnavailableEmbedder } from './embeddings.js'
 import type { LlmClient } from './llm.js'
 import { SessionStore } from './sessions.js'
 import { SYSTEM_PROMPT } from './systemPrompt.js'
 import { acpTools, createAcpToolExecutor } from './tools/acp.js'
-
-const embedder = config.embeddingApiKey
-  ? createGeminiEmbedder(config.embeddingApiKey, config.embeddingModel, config.embeddingDimensions)
-  : createUnavailableEmbedder(
-      'GEMINI_API_KEY is required to embed preference_notes for pay_for_checkout_session',
-    )
 
 /** One executor per chat session, not a shared singleton -- `buyer_id` on every recorded
  * purchase is the harness chat session id, so preferences recorded in one conversation stay
@@ -21,7 +14,6 @@ function defaultCreateToolExecutor(buyerId: string): ToolExecutor {
   return createAcpToolExecutor(config.merchants, config.pspUrl, {
     baseUrl: config.preferencesUrl,
     buyerId,
-    embedder,
   })
 }
 

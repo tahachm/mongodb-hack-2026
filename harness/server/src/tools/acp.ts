@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto'
 import type { ToolExecutor } from '../agent.js'
-import type { Embedder } from '../embeddings.js'
 import type { ToolDefinition } from '../llm.js'
 
 export const acpTools: ToolDefinition[] = [
@@ -182,12 +181,12 @@ async function postJson(url: string, body: unknown): Promise<Response> {
 }
 
 /** Buyer-scoped wiring for recording purchases in the preferences store: the preferences
- * service's base URL, the buyer id to record under (the harness chat session id -- see
- * app.ts), and the embedder used to turn `preference_notes` strings into vectors. */
+ * service's base URL and the buyer id to record under (the harness chat session id -- see
+ * app.ts). No embedder -- MongoDB Atlas Vector Search's Automated Embedding generates vectors
+ * server-side from the raw text we send; we never call an embedding API ourselves. */
 export interface PreferencesContext {
   baseUrl: string
   buyerId: string
-  embedder: Embedder
 }
 
 /**
@@ -259,32 +258,34 @@ export function createAcpToolExecutor(
   }
 
   /**
-   * Semantic lookup over this buyer's past purchases. Embeds each query phrase and runs the
-   * preferences store's bulk `$vectorSearch` scoped to `preferences.buyerId` -- never another
-   * buyer's history. Returns whatever the preferences service returns (a `results` array
-   * keyed by the query text); an embedder/preferences outage surfaces as a thrown error like
-   * any other tool failure, since this is a read with nothing to protect by catching it.
+   * Semantic lookup over this buyer's past purchases: runs the preferences store's bulk
+   * `$vectorSearch` scoped to `preferences.buyerId` -- never another buyer's history. Each
+   * query phrase is sent as raw text; MongoDB Atlas Automated Embedding embeds it server-side
+   * using the same model as the index, so results are directly comparable with no embedding
+   * step on our end. Returns whatever the preferences service returns (a `results` array
+   * keyed by the query text); a preferences outage surfaces as a thrown error like any other
+   * tool failure, since this is a read with nothing to protect by catching it.
    */
   async function recallPastPurchases(input: Record<string, unknown>) {
     const queries = requireNonEmptyStringArray(input, 'queries')
     const merchantId = typeof input.merchant_id === 'string' ? input.merchant_id : undefined
     const limit = typeof input.limit === 'number' ? input.limit : undefined
 
-    const embeddings = await preferences.embedder.embed(queries)
     const res = await postJson(`${preferences.baseUrl}/purchases/search`, {
       buyer_id: preferences.buyerId,
       merchant_id: merchantId,
-      queries: queries.map((q, i) => ({ id: q, embedding: embeddings[i], limit })),
+      queries: queries.map((q) => ({ id: q, text: q, limit })),
     })
     return readJsonOrThrow(res, 'recall_past_purchases')
   }
 
   /**
-   * Embeds each preference note and records the purchase in the preferences store. Called
-   * only after the charge has already succeeded, and its failures are caught, not thrown --
-   * a tracking outage must never look like the purchase itself failed, or get retried as a
-   * double charge. The caller surfaces the outcome in the tool result instead so the model
-   * (and ultimately a human) can see tracking didn't happen.
+   * Records the purchase in the preferences store, sending each preference note as raw text --
+   * MongoDB Atlas Automated Embedding embeds it server-side. Called only after the charge has
+   * already succeeded, and its failures are caught, not thrown -- a tracking outage must never
+   * look like the purchase itself failed, or get retried as a double charge. The caller
+   * surfaces the outcome in the tool result instead so the model (and ultimately a human) can
+   * see tracking didn't happen.
    */
   async function recordPurchasePreferences(
     merchantId: string,
@@ -293,7 +294,6 @@ export function createAcpToolExecutor(
     conversationNotes: string,
   ): Promise<Record<string, unknown>> {
     try {
-      const embeddings = await preferences.embedder.embed(preferenceNotes)
       const res = await postJson(`${preferences.baseUrl}/purchases`, {
         buyer_id: preferences.buyerId,
         merchant_id: merchantId,
@@ -303,7 +303,7 @@ export function createAcpToolExecutor(
           order: order.order ?? null,
         },
         notes: conversationNotes,
-        vectors: preferenceNotes.map((note, i) => ({ label: note, embedding: embeddings[i] })),
+        vectors: preferenceNotes.map((note) => ({ label: note, text: note })),
       })
       const body = await readJsonOrThrow(res, 'pay_for_checkout_session (record preferences)')
       return { recorded: true, purchase_id: body.purchase_id, vector_count: body.vector_count }

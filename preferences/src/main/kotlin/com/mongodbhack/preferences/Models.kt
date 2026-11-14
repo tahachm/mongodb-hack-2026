@@ -7,13 +7,14 @@ import kotlinx.serialization.json.JsonElement
 @Serializable
 data class HealthResponse(val ok: Boolean = true, val service: String = "preferences")
 
-/** One embedding to store alongside a purchase. `label` lets the caller store several
- * differently-angled vectors for the same purchase (e.g. one embedding the product listing,
- * another embedding the conversation that led to it) and tell them apart in search results. */
+/** One note to store alongside a purchase. `label` lets the caller store several
+ * differently-angled notes for the same purchase (e.g. one on the product listing, another on
+ * the conversation that led to it) and tell them apart in search results. `text` is raw text --
+ * MongoDB Atlas Vector Search auto-embeds it (Voyage AI), so we never see or store a vector. */
 @Serializable
 data class VectorInput(
     val label: String = "default",
-    val embedding: List<Float>,
+    val text: String,
 )
 
 /** Body for `POST /purchases`. One purchase, N vectors (at least one), one product listing,
@@ -36,11 +37,12 @@ data class RecordPurchaseResponse(
 
 /** One semantic query in a bulk lookup. `id` is caller-chosen and just echoed back so the
  * agent can line up `results[i]` with the query it asked, even if the service ever reorders or
- * runs them concurrently. */
+ * runs them concurrently. `text` is raw query text -- Atlas auto-embeds it the same way as
+ * stored vectors, using the same model, so results are comparable. */
 @Serializable
 data class SearchQuery(
     val id: String,
-    val embedding: List<Float>,
+    val text: String,
     val limit: Int = 5,
 )
 
