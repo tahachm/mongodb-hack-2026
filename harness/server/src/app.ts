@@ -1,11 +1,11 @@
 import cors from 'cors'
 import express from 'express'
-import type { ClaudeClient } from './claude.js'
+import type { LlmClient } from './llm.js'
 import { SessionStore } from './sessions.js'
 
 /** Builds the Express app without binding a port, so tests can drive it with supertest and
- * inject a fake ClaudeClient instead of calling the real Anthropic API. */
-export function createApp(claude: ClaudeClient, sessions: SessionStore = new SessionStore()) {
+ * inject a fake LlmClient instead of calling a real model provider. */
+export function createApp(llm: LlmClient, sessions: SessionStore = new SessionStore()) {
   const app = express()
   app.use(cors())
   app.use(express.json())
@@ -53,9 +53,7 @@ export function createApp(claude: ClaudeClient, sessions: SessionStore = new Ses
     })
 
     try {
-      const reply = await claude.send(
-        session.messages.map(({ role, content }) => ({ role, content })),
-      )
+      const reply = await llm.send(session.messages.map(({ role, content }) => ({ role, content })))
       sessions.appendMessage(session.id, {
         role: 'assistant',
         content: reply,
@@ -66,7 +64,7 @@ export function createApp(claude: ClaudeClient, sessions: SessionStore = new Ses
       // The user's turn above is already recorded, so a retry resends the same history --
       // same idempotency-by-replay spirit as the merchant/psp mocks, just not key-guarded.
       res.status(502).json({
-        error: 'claude_request_failed',
+        error: 'llm_request_failed',
         message: err instanceof Error ? err.message : String(err),
       })
     }

@@ -1,9 +1,9 @@
 import request from 'supertest'
 import { describe, expect, it } from 'vitest'
 import { createApp } from './app.js'
-import type { ChatTurn, ClaudeClient } from './claude.js'
+import type { ChatTurn, LlmClient } from './llm.js'
 
-function fakeClaude(reply: string | ((messages: ChatTurn[]) => string)): ClaudeClient {
+function fakeLlm(reply: string | ((messages: ChatTurn[]) => string)): LlmClient {
   return {
     async send(messages) {
       return typeof reply === 'function' ? reply(messages) : reply
@@ -13,7 +13,7 @@ function fakeClaude(reply: string | ((messages: ChatTurn[]) => string)): ClaudeC
 
 describe('harness-server chat API', () => {
   it('creates a session and lists it', async () => {
-    const app = createApp(fakeClaude('hi'))
+    const app = createApp(fakeLlm('hi'))
     const created = await request(app).post('/sessions').expect(201)
     expect(created.body.messages).toEqual([])
 
@@ -22,12 +22,12 @@ describe('harness-server chat API', () => {
   })
 
   it('404s for an unknown session', async () => {
-    const app = createApp(fakeClaude('hi'))
+    const app = createApp(fakeLlm('hi'))
     await request(app).get('/sessions/does-not-exist').expect(404)
   })
 
-  it('appends the user message and the claude reply, in order', async () => {
-    const app = createApp(fakeClaude('pong'))
+  it('appends the user message and the model reply, in order', async () => {
+    const app = createApp(fakeLlm('pong'))
     const created = await request(app).post('/sessions').expect(201)
 
     const replied = await request(app)
@@ -40,10 +40,10 @@ describe('harness-server chat API', () => {
     expect(replied.body.messages[1]).toMatchObject({ role: 'assistant', content: 'pong' })
   })
 
-  it('sends the full message history to claude on a follow-up turn', async () => {
+  it('sends the full message history to the model on a follow-up turn', async () => {
     const seen: ChatTurn[][] = []
     const app = createApp(
-      fakeClaude((messages) => {
+      fakeLlm((messages) => {
         seen.push(messages)
         return `reply ${seen.length}`
       }),
@@ -66,7 +66,7 @@ describe('harness-server chat API', () => {
   })
 
   it('rejects an empty message body', async () => {
-    const app = createApp(fakeClaude('hi'))
+    const app = createApp(fakeLlm('hi'))
     const created = await request(app).post('/sessions').expect(201)
     await request(app)
       .post(`/sessions/${created.body.id}/messages`)
@@ -74,7 +74,7 @@ describe('harness-server chat API', () => {
       .expect(400)
   })
 
-  it('returns 502 when claude fails, without losing the user turn', async () => {
+  it('returns 502 when the model provider fails, without losing the user turn', async () => {
     const app = createApp({
       async send() {
         throw new Error('rate limited')

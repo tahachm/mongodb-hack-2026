@@ -1,19 +1,9 @@
 import Anthropic from '@anthropic-ai/sdk'
-
-export interface ChatTurn {
-  role: 'user' | 'assistant'
-  content: string
-}
-
-/** Narrow seam between app.ts's routes and the Anthropic SDK -- lets tests inject a fake
- * instead of making real API calls. */
-export interface ClaudeClient {
-  send(messages: ChatTurn[]): Promise<string>
-}
+import type { LlmClient } from './llm.js'
 
 const MAX_TOKENS = 1024
 
-export function createClaudeClient(apiKey: string, model: string): ClaudeClient {
+export function createClaudeClient(apiKey: string, model: string): LlmClient {
   const anthropic = new Anthropic({ apiKey })
 
   return {
